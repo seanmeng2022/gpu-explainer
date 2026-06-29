@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPU Explainer · 真实推理数据流（DeepSeek-V2-Lite MoE）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e0d; --panel:#111816; --panel-2:#0d1413;
+    --ink:#d8e6e0; --dim:#6f857d;
+    --phos:#3dff9a; --amber:#ffb13d; --cyan:#39d0ff; --violet:#b78cff; --pink:#ff7eb6; --red:#ff5d5d;
+    --line:#223330; --grid:#1a2522;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #102b22 0%, transparent 55%),
+      radial-gradient(900px 500px at 0% 110%, #1a160a 0%, transparent 50%), var(--bg);
+    color:var(--ink); font-family:"Space Mono",monospace; line-height:1.6; overflow-x:hidden;
+  }
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 1px,transparent 1px 3px);mix-blend-mode:overlay}
+  .wrap{max-width:1200px;margin:0 auto;padding:0 26px}
+  ::selection{background:var(--phos);color:#04140c}
+
+  header{padding:48px 0 16px}
+  .kicker{font-size:12px;letter-spacing:.3em;color:var(--phos);text-transform:uppercase;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--phos);box-shadow:0 0 12px var(--phos);animation:pulse 1.6s infinite}
+  .kicker .live{color:var(--amber);border:1px solid var(--amber);border-radius:20px;padding:1px 10px;font-size:10px;letter-spacing:.15em}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  h1{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:clamp(30px,5vw,56px);line-height:1;letter-spacing:-.02em;margin:14px 0 10px}
+  h1 em{font-style:normal;color:var(--phos);text-shadow:0 0 30px rgba(61,255,154,.35)}
+  .sub{max-width:760px;color:var(--dim);font-size:14px}
+  .sub b{color:var(--ink);font-weight:400;border-bottom:1px dashed var(--line)}
+
+  .console{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin:22px 0 0;padding:14px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px 10px 0 0;border-bottom:none}
+  .btn{font-family:"Space Mono",monospace;font-size:13px;font-weight:700;letter-spacing:.04em;background:transparent;color:var(--phos);border:1px solid var(--phos);padding:9px 16px;border-radius:6px;cursor:pointer;transition:.18s;text-transform:uppercase}
+  .btn:hover:not(:disabled){background:var(--phos);color:#04140c;box-shadow:0 0 22px rgba(61,255,154,.45)}
+  .btn:disabled{opacity:.3;cursor:not-allowed}
+  /* 主行动：下一步 —— 更醒目（实心） */
+  .btn.primary{background:var(--phos);color:#04140c;box-shadow:0 0 18px rgba(61,255,154,.28)}
+  .btn.primary:hover:not(:disabled){box-shadow:0 0 28px rgba(61,255,154,.6);transform:translateY(-1px)}
+  .btn.ghost{color:var(--dim);border-color:var(--line)}
+  .btn.ghost:hover:not(:disabled){background:var(--line);color:var(--ink);box-shadow:none}
+  .navgrp{display:flex;gap:8px;align-items:center}
+  .kbd{font-family:"Space Mono",monospace;font-size:10px;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 6px;background:var(--panel-2)}
+  .hint{font-size:11px;color:var(--dim);letter-spacing:.02em;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .clock{font-size:13px;color:var(--amber)}.clock b{color:var(--ink)}
+  .doing{font-size:12px;color:var(--dim);letter-spacing:.04em}.doing b{color:var(--phos)}
+  .speed{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--dim);margin-left:auto}
+  input[type=range]{accent-color:var(--phos);width:120px}
+  .dsbox{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim)}
+  .dsbox select{font-family:"Space Mono",monospace;font-size:12px;background:var(--panel-2);color:var(--phos);border:1px solid var(--phos);border-radius:6px;padding:8px 10px;cursor:pointer}
+  /* 总进度条：贴在 console 底部，glanceable「我在哪」 */
+  .progbar{position:relative;height:5px;background:var(--panel-2);border:1px solid var(--line);border-top:none;border-radius:0 0 10px 10px;overflow:hidden;margin-bottom:16px}
+  .progbar i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--cyan),var(--phos));box-shadow:0 0 10px var(--phos);transition:width .25s ease;border-radius:0 3px 3px 0}
+
+  /* 阶段步骤导航 */
+  .steps{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 16px;align-items:center}
+  .grouphead{flex-basis:100%;font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:12px;letter-spacing:.08em;color:var(--ink);margin:10px 0 2px;display:flex;align-items:center;gap:8px}
+  .grouphead::before{content:"";width:14px;height:14px;border-radius:3px;background:var(--phos)}
+  .grouphead.gap{color:var(--dim)} .grouphead.gap::before{background:var(--dim)}
+  .grouphead:first-child{margin-top:0}
+  .step.gap{opacity:.6}
+  .step.gap{--c:var(--dim)}
+  .step{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:pointer;transition:.15s;font-size:12px}
+  .step:hover{border-color:var(--dim)}
+  .step .num{width:20px;height:20px;border-radius:50%;background:var(--panel-2);border:1px solid var(--grid);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--dim);flex-shrink:0}
+  .step .lab{color:var(--dim);white-space:nowrap}
+  .step .ms{color:var(--dim);opacity:.6;font-size:10px}
+  .step.host{--c:var(--amber)} .step.kernel{--c:var(--phos)} .step.wait{--c:var(--dim)}
+  .step.active{border-color:var(--c);background:color-mix(in srgb,var(--c) 12%,var(--panel))}
+  .step.active .num{background:var(--c);color:#04140c;border-color:var(--c)}
+  .step.active .lab{color:var(--ink)}
+  .step.done .num{border-color:var(--c);color:var(--c)}
+  .step .moe{color:var(--pink);font-weight:700} .step .cm{color:var(--violet);font-weight:700}
+
+  /* 动画 + 说明并排 */
+  .stage{display:grid;grid-template-columns:1fr 320px;gap:18px;align-items:start}
+  @media(max-width:980px){.stage{grid-template-columns:1fr}}
+  .boardcol{display:flex;flex-direction:column;gap:14px;min-width:0}
+  .info{display:flex;flex-direction:column;gap:14px;position:sticky;top:14px}
+
+  /* 实时读数仪表条（横向，填补图下方空白） */
+  .hud{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .hud .cell{background:var(--panel);padding:11px 14px;display:flex;flex-direction:column;gap:5px;min-width:0}
+  .hud .ck{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hud .cv{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:19px;line-height:1;color:var(--ink);transition:color .15s}
+  .hud .cv small{font-size:11px;font-weight:400;color:var(--dim);margin-left:2px}
+  /* 迷你水平计量条 */
+  .hud .gauge{height:4px;background:#0a100e;border-radius:2px;overflow:hidden}
+  .hud .gauge i{display:block;height:100%;border-radius:2px;transition:width .2s ease}
+  .hud .cell.amber .cv{color:var(--amber)} .hud .cell.phos .cv{color:var(--phos)}
+  .hud .cell.cyan .cv{color:var(--cyan)} .hud .cell.violet .cv{color:var(--violet)}
+  @media(max-width:620px){.hud{grid-template-columns:repeat(3,1fr)}}
+  /* 参考信息行：图下方 3 列 */
+  .refrow{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:18px;align-items:start}
+  @media(max-width:980px){.refrow{grid-template-columns:1fr}}
+  .info-note-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--cyan);border-radius:12px;padding:16px 20px}
+  .info-note-card .meta{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
+  .info-note-card .note{border:none;padding:0;margin:0;font-style:normal;font-size:12.5px;color:#bcd0c8;line-height:1.7}
+  .info-step{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--phos);border-radius:12px;padding:18px 20px}
+  .info-step .step-kicker{font-size:10px;color:var(--dim);letter-spacing:.12em;text-transform:uppercase;margin-bottom:6px}
+  .info-step h3{font-family:"Bricolage Grotesque",sans-serif;font-size:18px;font-weight:800;margin-bottom:6px;line-height:1.18}
+  .info-step p{font-size:12.5px;color:#9fb3aa;line-height:1.6}
+  .pnode{transition:r .15s,fill .15s}
+
+  /* 流水进度轨：紧凑节点 */
+  .rail{display:flex;align-items:center;margin:14px 0 4px;gap:0}
+  .railnode{display:flex;align-items:center;justify-content:center;cursor:pointer}
+  .railnode .rn{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:11px;font-weight:800;color:var(--dim);background:#0f1614;border:1.5px solid var(--c);opacity:.5;transition:.18s}
+  .railnode:hover .rn{opacity:.85}
+  .railnode.on .rn{opacity:1;color:#04140c;background:var(--c);box-shadow:0 0 10px var(--c);transform:scale(1.18)}
+  .railbar{flex:1;height:2px;background:var(--line);min-width:6px}
+
+  /* 当前子步详解卡片 */
+  .substep-detail{margin-top:8px;background:linear-gradient(180deg,rgba(255,255,255,.025),transparent);
+    border:1px solid var(--line);border-left:3px solid var(--ssc,var(--phos));border-radius:10px;padding:14px 16px;
+    animation:ssfade .25s ease}
+  @keyframes ssfade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .ss-head{display:flex;align-items:flex-start;gap:11px;margin-bottom:8px}
+  .ss-num{width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+    font-size:13px;font-weight:800;color:#04140c}
+  .ss-name{font-family:"Bricolage Grotesque",sans-serif;font-size:15px;font-weight:800;line-height:1.2}
+  .ss-short{font-size:11px;color:var(--dim);margin-top:2px;line-height:1.4}
+  .ss-detail{font-size:12.5px;color:#bcd0c8;line-height:1.7}
+
+  /* 主机/过渡步：本阶段在做什么（谁在动 / 谁在等） */
+  .host-note{margin-top:10px;background:linear-gradient(180deg,rgba(255,255,255,.025),transparent);
+    border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:10px;padding:13px 15px;animation:ssfade .25s ease}
+  .host-note .hn-title{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:9px}
+  .hnrow{display:grid;grid-template-columns:18px 1fr;gap:9px;align-items:start;margin:8px 0;font-size:12px}
+  .hnrow .hi{width:9px;height:9px;border-radius:50%;margin-top:5px}
+  .hnrow.busy .hi{box-shadow:0 0 7px currentColor}
+  .hnrow.idle{opacity:.5}
+  .hnrow .ht{color:var(--ink);font-weight:700} .hnrow.idle .ht{color:var(--dim);font-weight:400}
+  .hnrow .hd{color:var(--dim);font-size:11px;line-height:1.45;display:block;margin-top:1px}
+
+  /* 可展开真实统计 */
+  .ops-block{margin-top:12px}
+  .ops-title{font-size:10px;letter-spacing:.08em;color:var(--dim);margin-bottom:6px}
+  .oprow{margin:7px 0}
+  .oprow .otop{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:3px}
+  .oprow .oname{color:var(--ink);font-weight:700}
+  .oprow .ostat{color:var(--dim);font-size:10.5px;white-space:nowrap;margin-left:8px}
+  .oprow .odesc{font-size:10.5px;color:var(--dim);line-height:1.45}
+  .obar{height:5px;background:#0a100e;border-radius:3px;overflow:hidden;margin:3px 0}
+  .obar i{display:block;height:100%;border-radius:3px}
+  .opsdetails summary{font-size:11px;color:var(--cyan);cursor:pointer;list-style:revert}
+  .opsdetails summary:hover{color:var(--ink)}
+  .opsmini{margin-top:8px}
+  .oprow.mini{display:flex;justify-content:space-between;font-size:11.5px;margin:5px 0}
+  .oprow.mini .ostat{color:var(--dim);font-size:10.5px}
+  .info-live{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px}
+  .info-live .meta{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px}
+  .info-weights{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--pink);border-radius:12px;padding:16px 20px}
+  .info-weights .meta{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
+  .wrow{display:grid;grid-template-columns:14px 1fr auto;gap:8px;align-items:center;margin:7px 0;font-size:12px}
+  .wrow .dot{width:11px;height:11px;border-radius:3px}
+  .wrow .wl{color:#bcd0c8;line-height:1.3}
+  .wrow .wv{color:var(--dim);font-size:11px;white-space:nowrap}
+  .wrow .wv b{color:var(--ink)}
+  .wrow{border-radius:6px;padding:3px 6px;margin-left:-6px;margin-right:-6px;transition:background .2s,box-shadow .2s}
+  .wrow.hot{background:rgba(255,126,182,.14);box-shadow:inset 0 0 0 1px rgba(255,126,182,.4)}
+  .wrow.hot .wl{color:#fff}
+  .wsum{font-size:11px;color:var(--dim);margin-top:10px;border-top:1px dashed var(--line);padding-top:8px}
+  .wsum b{color:var(--pink)}
+  .info-dcgm{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--cyan);border-radius:12px;padding:16px 20px}
+  .info-dcgm .meta{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
+  .drow{margin:9px 0}
+  .drow .dtop{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+  .drow .dtop .dk{color:#bcd0c8} .drow .dtop .dv{color:var(--ink);font-weight:700}
+  .dbar{height:10px;background:#0a100e;border:1px solid var(--grid);border-radius:4px;overflow:hidden}
+  .dbar i{display:block;height:100%;border-radius:3px}
+  .dnote{font-size:11px;color:var(--dim);margin-top:8px;border-top:1px dashed var(--line);padding-top:8px}
+
+  .board{background:var(--panel-2);border:1px solid var(--line);border-radius:14px;padding:8px;position:relative;overflow:hidden}
+  .board svg{display:block;width:100%;height:auto}
+
+  /* SVG */
+  .pkgfill{fill:var(--panel)} .pkgstroke{fill:none;stroke:var(--line);stroke-width:1.5}
+  .dielabel{font-family:"Bricolage Grotesque",sans-serif;font-weight:800}
+  .sublabel{font-family:"Space Mono",monospace;fill:var(--dim);letter-spacing:.1em}
+  .cpucell{fill:#1c2620;stroke:#0c1210;stroke-width:1;transition:fill .12s}
+  .cpucell.on{fill:var(--amber)}
+  .gpubox{fill:#0f1614;stroke:var(--line);stroke-width:1.5;transition:stroke .15s,filter .15s}
+  .gpubox.on{stroke:var(--phos);filter:drop-shadow(0 0 6px rgba(61,255,154,.4))}
+  .gpulabel{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;fill:var(--phos);font-size:15px}
+  .hbmcell{fill:#241a36;stroke:#0c1210;stroke-width:.8;transition:fill .15s,filter .15s,opacity .15s}
+  .hbmcell.act:not(.wseg){fill:var(--violet);filter:drop-shadow(0 0 3px var(--violet))}
+  /* 权重分段：active 时用提亮发光，不覆盖各自颜色 */
+  .hbmcell.wseg.act{filter:brightness(1.3);opacity:1 !important}
+  .smcell{fill:#16201d;stroke:#0c1210;stroke-width:.7;transition:fill .1s,filter .1s}
+  .smcell.busy{fill:var(--phos);filter:drop-shadow(0 0 2px var(--phos))}
+  .smcell.moe{fill:var(--pink);filter:drop-shadow(0 0 2px var(--pink))}
+  .pcieline{stroke:#1c2a27;stroke-width:2;stroke-dasharray:2 4;transition:stroke .15s,opacity .15s}
+  .pcieline.act{stroke:var(--cyan);opacity:.85;stroke-dasharray:none}
+  .nvlink{stroke:var(--violet);stroke-width:5;stroke-linecap:round;opacity:.12;transition:opacity .15s}
+  .nvlink.act{opacity:.6}
+  .lbl{font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.04em}
+  .barbg{fill:#0a100e;stroke:var(--grid);stroke-width:.8}
+  .barfill{transition:width .12s}
+
+  /* 时间轴 scrubber */
+  .tl{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .tlhead{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:8px}
+  .strip{position:relative;height:30px;display:flex;border:1px solid var(--grid);border-radius:5px;overflow:hidden;background:#0a100e;cursor:pointer}
+  .strip .c{flex:1;height:100%}
+  .strip .scrub{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;z-index:5;pointer-events:none}
+  .stripleg{display:flex;gap:14px;font-size:10px;color:var(--dim);margin-top:7px;flex-wrap:wrap}
+  .stripleg span{display:flex;align-items:center;gap:5px}.stripleg i{width:9px;height:9px;border-radius:2px}
+
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin:14px 4px 0;font-size:11px;color:var(--dim)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .sw{width:16px;height:3px;border-radius:2px;display:inline-block}.sw.dot{width:10px;height:10px;border-radius:50%}
+
+  .row{display:grid;grid-template-columns:1.25fr .75fr;gap:22px;margin-top:20px}
+  @media(max-width:820px){.row{grid-template-columns:1fr}.console{gap:10px}.speed{margin-left:0}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px}
+  .card h3{font-family:"Bricolage Grotesque",sans-serif;font-size:18px;font-weight:800;margin-bottom:4px}
+  .card .meta{font-size:11px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px}
+  .card p{font-size:13px;color:#bcd0c8}
+  .stat{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+  .stat:last-child{border:none}.stat .k{color:var(--dim)}.stat .v{color:var(--phos);font-weight:700}
+  .stat .v.amber{color:var(--amber)}.stat .v.cyan{color:var(--cyan)}.stat .v.violet{color:var(--violet)}
+  .note{font-size:11.5px;color:var(--dim);font-style:italic;margin-top:10px;border-left:2px solid var(--line);padding-left:10px}
+
+  footer{border-top:1px solid var(--line);margin-top:36px;padding:24px 0 56px;color:var(--dim);font-size:12px}
+  footer b{color:var(--phos)} footer a{color:var(--cyan)}
+  .err{background:#2a1717;border:1px solid var(--red);color:#ffd0d0;padding:16px 20px;border-radius:10px;margin:20px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker"><span class="dot"></span> GPU EXPLAINER · 真实数据流 <span class="live">● 实测 TRACE</span></div>
+    <h1>真实推理里，<br><em>数据怎么在芯片间流动</em></h1>
+    <p class="sub">和原理示意图一样的物理视角——CPU、PCIe、GPU（含 HBM 显存与 SM 阵列）、卡间通信——但这次<b>每一刻点亮什么、数据往哪流，都由真实采集的 trace 驱动</b>（SGLang 跑 DeepSeek-V2-Lite MoE，torch.profiler 导出）。点 ▶ 播放，按真实时序回放这次推理。</p>
+  </header>
+
+  <div class="console">
+    <div class="dsbox">数据集
+      <select id="dataset"></select>
+    </div>
+    <div class="navgrp">
+      <button class="btn ghost" id="prev">◀ 上一步</button>
+      <button class="btn primary" id="next">下一步 ▶</button>
+    </div>
+    <button class="btn ghost" id="play">⏵ 自动播放</button>
+    <button class="btn ghost" id="reset">↻ 重置</button>
+    <div class="clock">第 <b id="stepno">1</b> / <span id="stepcount">0</span> 步 · t = <b id="clock">0.0</b> ms</div>
+    <span class="hint"><span class="kbd">←</span><span class="kbd">→</span> 翻步 · <span class="kbd">空格</span> 播放</span>
+    <div class="speed">速度 <input type="range" id="speed" min="0.25" max="4" step="0.25" value="1"><span id="speedv">1.0×</span></div>
+  </div>
+  <div class="progbar"><i id="prog" style="width:0%"></i></div>
+
+  <!-- 阶段步骤导航 -->
+  <div class="steps" id="steps"></div>
+
+  <!-- 动画 + 说明并排 -->
+  <div class="stage">
+  <div class="boardcol">
+  <div class="board" id="board">
+    <svg id="svg" viewBox="0 0 1200 460" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <marker id="ah" markerWidth="9" markerHeight="9" refX="5" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#39d0ff" opacity="0.7"/></marker>
+      </defs>
+
+      <!-- ===== CPU 主机 + DRAM ===== -->
+      <rect class="pkgfill" x="36" y="60" width="190" height="60" rx="8"/>
+      <rect class="pkgstroke" x="36" y="60" width="190" height="60" rx="8"/>
+      <text class="sublabel" x="52" y="86" font-size="11" style="fill:var(--amber)">DRAM</text>
+      <text class="sublabel" x="52" y="102" font-size="8">系统内存</text>
+      <rect x="150" y="70" width="12" height="40" rx="2" fill="#1c2620" stroke="#0c1210"/>
+      <rect x="168" y="70" width="12" height="40" rx="2" fill="#1c2620" stroke="#0c1210"/>
+      <rect x="186" y="70" width="12" height="40" rx="2" fill="#1c2620" stroke="#0c1210"/>
+
+      <rect class="pkgfill" x="36" y="150" width="190" height="200" rx="10"/>
+      <rect class="pkgstroke" x="36" y="150" width="190" height="200" rx="10"/>
+      <text class="dielabel" x="52" y="182" font-size="20" style="fill:var(--ink)">CPU</text>
+      <text class="sublabel" x="52" y="197" font-size="8">HOST · 下发/采样</text>
+      <g id="cpucells"></g>
+      <!-- CPU 繁忙度条 -->
+      <rect class="barbg" x="52" y="328" width="158" height="8" rx="3"/>
+      <rect class="barfill" id="bar-cpu" x="52" y="328" width="0" height="8" rx="3" fill="var(--amber)"/>
+
+      <!-- ===== PCIe ===== -->
+      <text class="lbl" x="246" y="195" style="fill:var(--cyan)">PCIe</text>
+      <text class="lbl" x="238" y="320" style="fill:var(--dim)">~32GB/s</text>
+      <g id="pcieLinks"></g>
+
+      <!-- ===== 2 张 GPU ===== -->
+      <g id="gpus"></g>
+      <g id="links"></g>
+      <g id="packets"></g>
+      <!-- ===== 层流水管线 ===== -->
+      <g id="pipeline"></g>
+    </svg>
+
+    <div class="legend">
+      <span><i class="sw dot" style="background:var(--amber)"></i> CPU 活跃</span>
+      <span><i class="sw dot" style="background:var(--cyan)"></i> PCIe 搬运</span>
+      <span><i class="sw dot" style="background:var(--phos)"></i> GPU 计算(GEMM/注意力)</span>
+      <span><i class="sw dot" style="background:var(--pink)"></i> MoE 专家计算</span>
+      <span><i class="sw dot" style="background:var(--violet)"></i> 卡间通信 All-Reduce</span>
+      <span style="color:var(--dim)">明暗 = 真实繁忙度</span>
+    </div>
+  </div>
+
+  <!-- 实时读数：横向仪表条，紧贴动画下方（填补空白、更易扫读） -->
+  <div class="hud" id="hud"></div>
+  </div><!-- /.boardcol -->
+
+  <!-- 右侧：当前步骤说明（与动画同屏） -->
+  <aside class="info">
+    <div class="info-step">
+      <div class="step-kicker" id="d-meta">实测 trace · 单步查看</div>
+      <h3 id="d-title">这次推理的真实画像</h3>
+      <p id="d-desc">点「下一步」逐步查看：CPU 准备 → GPU 逐层计算（每层 8 个子步）→ 采样。</p>
+
+      <!-- 流水进度轨：8 个紧凑节点，当前高亮 -->
+      <div class="rail" id="ops-rail" style="display:none"></div>
+
+      <!-- 当前子步详解（醒目卡片） -->
+      <div class="substep-detail" id="substep-detail" style="display:none">
+        <div class="ss-head"><span class="ss-num" id="ss-num">①</span>
+          <div><div class="ss-name" id="ss-name">—</div><div class="ss-short" id="ss-short">—</div></div>
+        </div>
+        <p class="ss-detail" id="ss-detail">—</p>
+      </div>
+
+      <!-- 主机/过渡步：本阶段在做什么（谁在动、谁在等） -->
+      <div class="host-note" id="host-note" style="display:none">
+        <div class="hn-title">本阶段在做什么</div>
+        <div class="hn-rows" id="hn-rows"></div>
+      </div>
+
+      <!-- 非计算步：真实算子列表 / 计算步可展开统计 -->
+      <div class="ops-block" id="ops-block" style="display:none">
+        <div class="ops-title" id="ops-title-text"></div>
+        <div id="ops-list"></div>
+      </div>
+    </div>
+  </aside>
+  </div><!-- /.stage -->
+
+  <!-- 参考信息：不随步骤变化，横向铺在图下方 -->
+  <div class="refrow">
+    <div class="info-weights" id="weights-card">
+      <div class="meta">每张 GPU 装了哪些权重 · 真实推导</div>
+      <div id="weights-list"></div>
+    </div>
+    <div class="info-dcgm" id="dcgm-card">
+      <div class="meta">GPU 实测利用率 · DCGM</div>
+      <div id="dcgm-list"></div>
+    </div>
+    <div class="info-note-card">
+      <div class="meta">这次推理的真实结论</div>
+      <div class="note" id="d-note"></div>
+    </div>
+  </div>
+
+  <footer>
+    <p>GPU Explainer · 真实数据流视图 · 数据源 SGLang torch.profiler（<span id="f-model"></span> · <span id="f-gpu"></span>）。
+    点亮时序/通信/各 kernel 耗时为<b>实测</b>（torch.profiler）；SM 活跃率、HBM 活跃率的<b>整段平均值</b>为<b>实测</b>（DCGM，见右侧卡片）。
+    动画里 SM 阵列点亮比例、HBM 带宽条的<b>逐子步强度</b>为<b>示意</b>——DCGM 只测了整段平均，未按子步/阶段分别测量；「具体点亮哪几个 SM 方块」同样是示意（硬件不暴露物理 SM 调度）。
+    原理动画版见 <a href="../index.html">../index.html</a>。</p>
+  </footer>
+
+</div>
+
+<script src="datasets.js"></script>
+<script>
+// 把任何运行时错误显示到页面顶部（不用开 F12）
+window.addEventListener('error',function(e){
+  let bar=document.getElementById('dbgbar');
+  if(!bar){bar=document.createElement('div');bar.id='dbgbar';
+    bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99999;background:#3a1717;color:#ffd0d0;font:12px monospace;padding:8px 14px;border-bottom:1px solid #ff5d5d;white-space:pre-wrap';
+    document.body.appendChild(bar);}
+  bar.textContent='⚠ JS 错误: '+e.message+'  @ '+(e.filename||'').split('/').pop()+':'+e.lineno;
+});
+let _activeCleanup=null;   // 当前视图的清理函数（取消动画/清空 SVG）
+
+function buildView(D){
+  try{ _buildView(D); }
+  catch(err){
+    document.getElementById('board').innerHTML='<div class="err">构建视图出错：'+err.message+'<br><small>'+(err.stack||'').split('\n').slice(0,3).join('<br>')+'</small></div>';
+    throw err;
+  }
+}
+function _buildView(D){
+  if(_activeCleanup){_activeCleanup();_activeCleanup=null;}
+  if(!D){ document.getElementById('board').innerHTML='<div class="err">数据集为空或加载失败。</div>'; return; }
+  const NS="http://www.w3.org/2000/svg";
+  const mk=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+  // 切换数据集时先清空上一份渲染
+  ['gpus','links','packets','cpucells','pcieLinks','pipeline'].forEach(id=>{const g=document.getElementById(id);if(g)while(g.firstChild)g.removeChild(g.firstChild);});
+  document.getElementById('steps').innerHTML='';
+  const TL=D.timeline, NB=TL.length, TOTAL=D.meta.total_ms;
+  document.getElementById('f-model').textContent=D.meta.model;
+  document.getElementById('f-gpu').textContent=D.meta.gpu;
+
+  const KIND_CN={gemm:'GEMM 矩阵乘',attention:'注意力',moe_expert:'MoE 专家计算',elementwise:'逐元素/归一化',other_kernel:'其它 kernel',null:'空闲'};
+
+  // ---------- 画 2 张 GPU ----------
+  const gpusG=document.getElementById('gpus');
+  const GPOS=[{x:300,y:60,id:0},{x:760,y:60,id:1}];
+  const GW=400,GH=300;
+  const gpuBox=[],smCells=[],hbmCells=[];
+  GPOS.forEach(p=>{
+    const ox=p.x,oy=p.y;
+    const box=mk('rect',{class:'gpubox',x:ox,y:oy,width:GW,height:GH,rx:10});gpusG.appendChild(box);gpuBox[p.id]=box;
+    gpusG.appendChild(Object.assign(mk('text',{class:'gpulabel',x:ox+14,y:oy+26}),{textContent:'GPU '+p.id}));
+    gpusG.appendChild(Object.assign(mk('text',{class:'sublabel',x:ox+70,y:oy+24,'font-size':8,style:'fill:var(--dim)'}),{textContent:'TP rank '+p.id}));
+    // HBM 显存 —— 按真实权重分布堆叠着色
+    const W=D.meta&&D.meta.weights;
+    const perGpu = W?W.per_gpu_gb:null;
+    gpusG.appendChild(Object.assign(mk('text',{class:'sublabel',x:ox+14,y:oy+48,'font-size':8,style:'fill:var(--violet)'}),
+      {textContent:'HBM 显存 · 加载的模型权重'+(perGpu?` ≈ ${perGpu} GB/卡`:'')}));
+    hbmCells[p.id]=[];
+    {
+      const x0=ox+14, y0=oy+54, barW=GW-28, barH=24;
+      if(W && W.parts){
+        // 权重类型 → 颜色
+        const WC={embedding:'#39d0ff',attention:'#7CFFcb',dense_ffn:'#ffb13d',moe_experts:'#ff7eb6',lm_head:'#b78cff'};
+        let xx=x0;
+        W.parts.forEach(part=>{
+          const w=Math.max(2, barW*part.pct/100);
+          const seg=mk('rect',{class:'hbmcell wseg',x:xx,y:y0,width:w,height:barH,rx:2,
+            fill:WC[part.key]||'#b78cff','data-key':part.key});
+          seg.style.opacity='0.85';
+          gpusG.appendChild(seg);hbmCells[p.id].push(seg);
+          // 占比大的段内标注
+          if(part.pct>=8){
+            gpusG.appendChild(Object.assign(mk('text',{x:xx+w/2,y:y0+15,'text-anchor':'middle',
+              'font-size':9,'font-family':'Space Mono',fill:'#04140c','font-weight':700}),
+              {textContent:part.pct+'%'}));
+          }
+          xx+=w;
+        });
+      } else {
+        // 无权重数据时回退到原来的 4 格
+        const w=86,gap=8; for(let i=0;i<4;i++){const e=mk('rect',{class:'hbmcell',x:x0+i*(w+gap),y:y0,width:w,height:barH,rx:3});gpusG.appendChild(e);hbmCells[p.id].push(e);}
+      }
+    }
+    // SM 阵列 10x4
+    gpusG.appendChild(Object.assign(mk('text',{class:'sublabel',x:ox+14,y:oy+102,'font-size':8,style:'fill:var(--phos)'}),{textContent:'SM 阵列（流多处理器）'}));
+    smCells[p.id]=[];
+    {const w=32,h=20,gx=5,gy=6,x0=ox+14,y0=oy+112; for(let r=0;r<4;r++)for(let c=0;c<10;c++){const e=mk('rect',{class:'smcell',x:x0+c*(w+gx),y:y0+r*(h+gy),width:w,height:h,rx:2});gpusG.appendChild(e);smCells[p.id].push(e);}}
+    // HBM 显存带宽用量条（实测 DRAM 活跃率；与上方 SM 算力互补）
+    gpusG.appendChild(Object.assign(mk('text',{class:'sublabel',x:ox+14,y:oy+GH-28,'font-size':8,style:'fill:var(--violet)'}),
+      {textContent:'HBM 带宽用量（示意）'}));
+    gpusG.appendChild(mk('rect',{class:'barbg',x:ox+96,y:oy+GH-36,width:GW-160,height:9,rx:3}));
+    const bf=mk('rect',{class:'barfill',id:'bar-gpu'+p.id,x:ox+96,y:oy+GH-36,width:0,height:9,rx:3,fill:'var(--violet)'});gpusG.appendChild(bf);
+    gpusG.appendChild(Object.assign(mk('text',{id:'bar-gpu-val'+p.id,x:ox+GW-50,y:oy+GH-28,'font-size':9,'font-family':'Space Mono',style:'fill:var(--violet)'}),{textContent:'0%'}));
+  });
+
+  // ---------- CPU 核心 3x3 ----------
+  const cpuG=document.getElementById('cpucells');const cpuCells=[];
+  {const x0=52,y0=210,w=46,h=30,gx=8,gy=8; for(let r=0;r<3;r++)for(let c=0;c<3;c++){const e=mk('rect',{class:'cpucell',x:x0+c*(w+gx),y:y0+r*(h+gy),width:w,height:h,rx:3});cpuG.appendChild(e);cpuCells.push(e);}}
+
+  // ---------- PCIe 链路（CPU → 两张 GPU） ----------
+  const pcieG=document.getElementById('pcieLinks');
+  const PCIE=[{x1:226,y1:200,x2:300,y2:160},{x1:226,y1:230,x2:300,y2:330}];
+  const pcieEls=PCIE.map(e=>{const ln=mk('line',{class:'pcieline',x1:e.x1,y1:e.y1,x2:e.x2,y2:e.y2,'marker-end':'url(#ah)'});pcieG.appendChild(ln);return ln;});
+
+  // ---------- NVLink/NCCL（两张 GPU 之间） ----------
+  const linksG=document.getElementById('links');
+  const NVLINE={x1:700,y1:210,x2:760,y2:210};
+  const nvEl=mk('line',{class:'nvlink',x1:NVLINE.x1,y1:NVLINE.y1,x2:NVLINE.x2,y2:NVLINE.y2});linksG.appendChild(nvEl);
+  linksG.appendChild(Object.assign(mk('text',{class:'lbl',x:730,y:200,'text-anchor':'middle',style:'fill:var(--violet);opacity:.7'}),{textContent:'NCCL'}));
+  linksG.appendChild(Object.assign(mk('text',{class:'lbl',x:730,y:236,'text-anchor':'middle',style:'fill:var(--dim)'}),{textContent:'All-Reduce'}));
+
+  const packetsG=document.getElementById('packets');
+
+  // ---------- 层流水管线（GPU 计算步时演示一层的 8 个子步）----------
+  const pipeG=document.getElementById('pipeline');
+  while(pipeG.firstChild)pipeG.removeChild(pipeG.firstChild);
+  // 子步两套：Prefill（并行多 token，算力重）/ Decode（单 token，复用 KV cache，访存重）
+  // sm = SM 点亮比例（按实测占比差异设计：Prefill 高、Decode 低）
+  const SUBSTEPS_PREFILL=[
+    {tag:'①',name:'层归一化 (RMSNorm)', sm:0.18, hbm:'attention', comm:false, pink:false,
+     short:'对全部输入 token 的向量做归一化',
+     detail:'对这一层输入（成百上千个 token）的隐藏向量做 RMSNorm，按均方根缩放使数值稳定。计算量小，但每层每个子块前都要做。'},
+    {tag:'②',name:'QKV 投影 (大 GEMM)', sm:0.62, hbm:'attention', comm:false, pink:false,
+     short:'把所有 token 一次性投影成 Q / K / V',
+     detail:'用权重矩阵把全部 token 的向量批量投影成 Query/Key/Value。因为 token 多，这是一个大矩阵乘 (GEMM)，能喂满 Tensor Core。张量并行下按头切到两卡各算一半。'},
+    {tag:'③',name:'注意力 (全序列)', sm:0.85, hbm:'attention', comm:false, pink:false,
+     short:'每个 token 对所有 token 算注意力，并写入 KV cache',
+     detail:'Prefill 要算「全部 token 两两之间」的注意力（Q·Kᵀ → softmax → 加权 V），计算量随序列长度平方增长，很重。算完把 K、V 写进 KV cache，供后续 Decode 复用。'},
+    {tag:'④',name:'注意力输出 + All-Reduce', sm:0.45, hbm:'attention', comm:true, pink:false,
+     short:'输出投影，两卡分片求和合并',
+     detail:'注意力结果过输出投影 GEMM。张量并行把头切到两卡，各算一半，需 NCCL All-Reduce 跨卡求和得到完整输出 —— 第一处跨卡通信。'},
+    {tag:'⑤',name:'层归一化 (RMSNorm)', sm:0.18, hbm:'moe_experts', comm:false, pink:false,
+     short:'进入 MoE 前再归一化',
+     detail:'注意力子块结束、进入 MoE 前馈子块前再做一次 RMSNorm。'},
+    {tag:'⑥',name:'MoE 路由 (Router)', sm:0.32, hbm:'moe_experts', comm:false, pink:true,
+     short:'给每个 token 打分选 top-6 专家，按专家分组',
+     detail:'router 给每个 token 对 64 个专家打分，选 top-6。Prefill 有很多 token，会比较均匀地铺到多个专家上，专家利用率高。'},
+    {tag:'⑦',name:'专家前馈 (Expert FFN)', sm:0.92, hbm:'moe_experts', comm:false, pink:true,
+     short:'众多 token 分散到多个专家做分组 GEMM',
+     detail:'Prefill 的 token 多、分散到很多专家，每个专家都拿到一批 token 做 grouped GEMM + SwiGLU，专家几乎都在忙，SM 打满 —— 这是 Prefill 算力的主体（实测占 54%）。'},
+    {tag:'⑧',name:'MoE 输出 + All-Reduce', sm:0.5, hbm:'moe_experts', comm:true, pink:true,
+     short:'合并专家输出，再跨卡求和',
+     detail:'还原 token 顺序、合并专家输出，再做一次 NCCL All-Reduce。一层完成，重复 27 层后整段输入处理完毕。'},
+  ];
+  const SUBSTEPS_DECODE=[
+    {tag:'①',name:'层归一化 (RMSNorm)', sm:0.08, hbm:'attention', comm:false, pink:false,
+     short:'只对 1 个新 token 的向量归一化',
+     detail:'Decode 每轮只处理「1 个」新 token。归一化几乎不耗时，但和 Prefill 一样每层都要做。'},
+    {tag:'②',name:'QKV 投影 (小 GEMV)', sm:0.22, hbm:'attention', comm:false, pink:false,
+     short:'单 token 投影，矩阵乘退化成向量乘',
+     detail:'只有 1 个 token，QKV 投影从大 GEMM 退化成 GEMV（矩阵×向量）。算力需求很小，但权重仍要从 HBM 全量读一遍 —— 于是瓶颈在「读权重」而非「算」，这正是 Decode 访存受限的根源。'},
+    {tag:'③',name:'注意力 (读 KV cache)', sm:0.12, hbm:'attention', comm:false, pink:false,
+     short:'新 token 只和缓存的 K/V 算，几乎不重算',
+     detail:'关键差异！Decode 直接复用 Prefill 写好的 KV cache，新 token 的 Query 只和「已缓存的」K/V 做注意力，不再重算历史 token。所以注意力计算量极小（实测≈0ms），主要开销是读 KV cache。'},
+    {tag:'④',name:'注意力输出 + All-Reduce', sm:0.18, hbm:'attention', comm:true, pink:false,
+     short:'输出投影，两卡分片求和',
+     detail:'同样需要跨卡 All-Reduce 合并张量并行分片。但因为只有 1 个 token，通信量也很小。'},
+    {tag:'⑤',name:'层归一化 (RMSNorm)', sm:0.08, hbm:'moe_experts', comm:false, pink:false,
+     short:'进入 MoE 前归一化',
+     detail:'进入 MoE 子块前的归一化。'},
+    {tag:'⑥',name:'MoE 路由 (Router)', sm:0.18, hbm:'moe_experts', comm:false, pink:true,
+     short:'给这 1 个 token 选 6 个专家',
+     detail:'router 只为这 1 个 token 选 top-6 专家。结果是：64 个专家里只有 6 个会被激活，其余 58 个完全闲置 —— 单 token Decode 时 MoE 的稀疏性最极端。'},
+    {tag:'⑦',name:'专家前馈 (Expert FFN)', sm:0.3, hbm:'moe_experts', comm:false, pink:true,
+     short:'仅 6 个专家各处理 1 个 token',
+     detail:'只有被选中的 6 个专家工作，每个只处理 1 个 token，远喂不满 SM。但这 6 个专家的权重仍要从 HBM 读入 —— 「读得多、算得少」。这正是业界常说 Decode 是访存受限(memory-bound)、算力利用率通常低于 Prefill 的原因（本页未对两阶段分别实测利用率，此为普遍规律）。'},
+    {tag:'⑧',name:'MoE 输出 + All-Reduce', sm:0.2, hbm:'moe_experts', comm:true, pink:true,
+     short:'合并专家输出，跨卡求和',
+     detail:'合并专家输出并跨卡 All-Reduce。一层完成；27 层走完得到 1 个新 token 的 logits，交给 CPU 采样，再进入下一轮 Decode。'},
+  ];
+  function subSetFor(ph){ return (ph && ph.group==='decode') ? SUBSTEPS_DECODE : SUBSTEPS_PREFILL; }
+  let SUBSTEPS = SUBSTEPS_PREFILL;   // 当前激活的子步集（render 时按阶段切换）
+  const SUBCOL=['#2fae6e','#3dff9a','#7CFFcb','#b78cff','#2fae6e','#ff7eb6','#ff7eb6','#b78cff'];
+  const PIPE_Y=410, PIPE_X0=320, PIPE_X1=1140;
+  const pipeNodes=[];
+  // 标题
+  pipeG.appendChild(Object.assign(mk('text',{class:'sublabel',x:PIPE_X0,y:PIPE_Y-26,'font-size':10,style:'fill:var(--phos)'}),
+    {textContent:'⚙ 一层的执行流水（GPU 计算时循环 N 层）'}));
+  // 连接线
+  pipeG.appendChild(mk('line',{id:'pipe-line',x1:PIPE_X0,y1:PIPE_Y,x2:PIPE_X1,y2:PIPE_Y,stroke:'var(--line)','stroke-width':2}));
+  SUBSTEPS.forEach((s,i)=>{
+    const x=PIPE_X0+(PIPE_X1-PIPE_X0)*i/(SUBSTEPS.length-1);
+    const g=mk('g',{});
+    const c=mk('circle',{class:'pnode',cx:x,cy:PIPE_Y,r:13,fill:'#0f1614',stroke:SUBCOL[i],'stroke-width':2});
+    g.appendChild(c);
+    g.appendChild(Object.assign(mk('text',{x:x,y:PIPE_Y+4,'text-anchor':'middle','font-size':11,'font-weight':700,fill:SUBCOL[i]}),{textContent:s.tag}));
+    const lbl=Object.assign(mk('text',{class:'pnlabel',x:x,y:PIPE_Y+30,'text-anchor':'middle','font-size':8.5,fill:'var(--dim)'}),{textContent:s.name});
+    g.appendChild(lbl);
+    pipeG.appendChild(g);
+    pipeNodes.push({circle:c,x,label:lbl});
+  });
+  // 短名（节点下方标签用），按子步集更新
+  function shortNodeName(s){ return s.name.replace(/\s*\(.*\)/,''); }
+  function relabelPipeline(set){
+    pipeNodes.forEach((n,i)=>{ n.label.textContent = i<set.length ? shortNodeName(set[i]) : ''; });
+  }
+  // 流动光点
+  const pipeDot=mk('circle',{id:'pipe-dot',cx:PIPE_X0,cy:PIPE_Y,r:7,fill:'#fff',style:'filter:drop-shadow(0 0 8px #fff)',opacity:0});
+  pipeG.appendChild(pipeDot);
+
+  // ---------- 权重联动 ----------
+  // 根据此刻 GPU 在算什么(gpu_top)推断用到哪些权重类型
+  function weightKeysForBucket(b, gpuV){
+    const ks=new Set();
+    if(gpuV<=0.05) return ks;            // GPU 没在算 → 不高亮权重
+    // 优先用「当前步骤」的属性（整步稳定高亮），否则回退到当前桶的 gpu_top
+    const ph = (typeof curStep==='number') ? PH[curStep] : null;
+    if(ph){
+      if(ph.macro!=='kernel') return ks;  // 主机/空档步：GPU 没在算 → 不高亮权重
+      ks.add('attention');               // 每层前向都过注意力
+      if(ph.has_moe) ks.add('moe_experts');
+      else { ks.add('dense_ffn'); ks.add('lm_head'); }
+      return ks;
+    }
+    const top=b.gpu_top;
+    if(top==='moe_expert'){ ks.add('moe_experts'); ks.add('attention'); }
+    else if(top==='gemm'){ ks.add('attention'); ks.add('dense_ffn'); ks.add('lm_head'); }
+    else { ks.add('attention'); }
+    return ks;
+  }
+  function highlightWeightRows(keys){
+    document.querySelectorAll('.wrow').forEach(r=>{
+      const k=r.getAttribute('data-key');
+      r.classList.toggle('hot', keys.has(k));
+    });
+  }
+
+  // ---------- 层流水驱动（按显式子步索引，单步展示）----------
+  function subCount(ph){ return (ph && ph.macro==='kernel') ? (ph.has_moe?SUBSTEPS.length:4) : 0; }
+  // 每个子步的 HBM 带宽相对强度（0~1，示意）。读权重的步(QKV/专家)最吃带宽。
+  // 注：DCGM 只测了整段平均(峰值)，子步级强度为示意，Prefill/Decode 不做无依据的高低区分。
+  function hbwOf(idx, isDecode){
+    // ①归一 ②QKV ③注意力 ④输出+AR ⑤归一 ⑥路由 ⑦专家 ⑧输出+AR
+    const a =[0.3, 0.7, 0.8, 0.5, 0.3, 0.4, 0.95, 0.55];
+    return a[Math.max(0,Math.min(a.length-1,idx))];
+  }
+  function drivePipeline(ph, idx){
+    const count = subCount(ph);
+    const on = count>0 && idx>=0;
+    pipeDot.setAttribute('opacity', on?1:0);
+    pipeNodes.forEach((n,i)=>{
+      const active = i===idx;
+      n.circle.setAttribute('fill', active? SUBCOL[i] : '#0f1614');
+      n.circle.setAttribute('r', active? 16 : 13);
+      n.circle.style.filter = active? `drop-shadow(0 0 8px ${SUBCOL[i]})` : 'none';
+      n.circle.style.opacity = (count>0 && i<count)?1:0.25;
+    });
+    if(on){ pipeDot.setAttribute('cx', pipeNodes[idx].x); pipeDot.setAttribute('cy', PIPE_Y); }
+    // 同步高亮右侧流水行
+    document.querySelectorAll('.flowrow').forEach((r,i)=>r.classList.toggle('flow-active', on && i===idx));
+    return {idx, sub: on?SUBSTEPS[idx]:{sm:0,hbm:'attention',comm:false,pink:false}};
+  }
+
+  // ---------- 渲染某一时刻（桶 index） ----------
+  function lightFraction(cells,frac,cls){const n=Math.round(cells.length*frac);cells.forEach((c,i)=>{c.classList.remove('busy','moe');if(i<n)c.classList.add(cls);});}
+  function render(bi){
+    const b=TL[Math.max(0,Math.min(NB-1,bi))];
+    const cpuV=b.cpu||0,pcieV=b.pcie||0,gpuV=b.gpu||0,commV=b.comm||0;
+    // CPU 核心
+    const cn=Math.round(cpuCells.length*cpuV);cpuCells.forEach((c,i)=>c.classList.toggle('on',i<cn));
+    document.getElementById('bar-cpu').setAttribute('width',(158*cpuV).toFixed(1));
+
+    // 当前是否 GPU 计算步 → 启用层流水演示（子步由 subStep 显式控制）
+    const ph=(typeof curStep==='number')?PH[curStep]:null;
+    const isKernel = ph && ph.macro==='kernel' && gpuV>0.05;
+    const sub = drivePipeline(isKernel?ph:null, isKernel?subStep:-1);
+    const onSub = isKernel && sub.idx>=0;
+
+    // 决定 SM/HBM/通信：计算步用流水子步驱动，否则用桶数据
+    const moe = onSub ? sub.sub.pink : (b.gpu_top==='moe_expert');
+    const activeKeys = onSub ? new Set([sub.sub.hbm,'attention']) : weightKeysForBucket(b,gpuV);
+    const smPeak=(D.meta&&D.meta.dcgm)?(D.meta.dcgm.sm_active_pct/100):1;
+    const smFrac = onSub ? sub.sub.sm*smPeak : gpuV*smPeak;
+    const commActive = onSub ? sub.sub.comm : (commV>0.03);
+    // HBM 带宽用量：实测 DRAM 活跃率为峰值，按子步性质调制
+    const dramPeak=(D.meta&&D.meta.dcgm)?(D.meta.dcgm.dram_active_pct/100):0.58;
+    const isDecode = ph && ph.group==='decode';
+    const hbwFrac = onSub ? hbwOf(sub.idx, isDecode)*dramPeak : gpuV*dramPeak*0.7;
+    const barW=GW-160;
+    [0,1].forEach(g=>{
+      gpuBox[g].classList.toggle('on',gpuV>0.05);
+      lightFraction(smCells[g],smFrac,moe?'moe':'busy');
+      hbmCells[g].forEach(h=>{
+        const k=h.getAttribute('data-key');
+        if(k) h.classList.toggle('act', gpuV>0.05 && activeKeys.has(k));
+        else h.classList.toggle('act', gpuV>0.05);
+      });
+      document.getElementById('bar-gpu'+g).setAttribute('width',(barW*hbwFrac).toFixed(1));
+      const vEl=document.getElementById('bar-gpu-val'+g);
+      if(vEl) vEl.textContent=(gpuV>0.05?Math.round(hbwFrac*100):0)+'%';
+    });
+    highlightWeightRows(activeKeys);
+    // PCIe
+    pcieEls.forEach(l=>l.classList.toggle('act',pcieV>0.01));
+    // NVLink/NCCL：计算步用流水子步决定，否则用桶数据
+    nvEl.classList.toggle('act',commActive);
+    // 数据包
+    drawPackets(pcieV, commActive?Math.max(commV,0.3):0);
+    // 读数（横向仪表条）
+    document.getElementById('clock').textContent=b.t.toFixed(1);
+    const gauge=(v,col)=>`<div class="gauge"><i style="width:${Math.min(100,v*100).toFixed(0)}%;background:${col}"></i></div>`;
+    const pct=v=>`${(v*100).toFixed(0)}<small>%</small>`;
+    document.getElementById('hud').innerHTML=
+      `<div class="cell amber"><span class="ck">时间</span><span class="cv">${b.t.toFixed(1)}<small>ms</small></span><span class="ck" style="color:var(--dim);text-transform:none;letter-spacing:0">/ ${TOTAL.toFixed(0)} ms</span></div>
+       <div class="cell amber"><span class="ck">CPU 繁忙度</span><span class="cv">${pct(cpuV)}</span>${gauge(cpuV,'var(--amber)')}</div>
+       <div class="cell phos"><span class="ck">GPU 繁忙度</span><span class="cv">${pct(gpuV)}</span>${gauge(gpuV,'var(--phos)')}</div>
+       <div class="cell cyan"><span class="ck">PCIe 搬运</span><span class="cv">${pcieV>0.01?'● <small>活跃</small>':'—'}</span>${gauge(pcieV>0.01?1:0,'var(--cyan)')}</div>
+       <div class="cell violet"><span class="ck">卡间通信</span><span class="cv">${commActive?pct(Math.max(commV,0.1)):'—'}</span>${gauge(commActive?Math.max(commV,0.1):0,'var(--violet)')}</div>
+       <div class="cell phos"><span class="ck">GPU 在算</span><span class="cv" style="font-size:14px;line-height:1.25">${onSub?SUBSTEPS[sub.idx].name.replace(/\s*\(.*\)/,''):((isKernel&&gpuV>0.05)?(KIND_CN[b.gpu_top]||'空闲'):'空闲')}</span></div>`;
+  }
+  function drawPackets(pcieV,commV){
+    while(packetsG.firstChild)packetsG.removeChild(packetsG.firstChild);
+    // PCIe 包（CPU→GPU），数量随繁忙度
+    if(pcieV>0.01){PCIE.forEach(e=>{const x=e.x1+(e.x2-e.x1)*pktPhase,y=e.y1+(e.y2-e.y1)*pktPhase;
+      packetsG.appendChild(mk('circle',{cx:x,cy:y,r:5,fill:'var(--cyan)',style:'filter:drop-shadow(0 0 4px #39d0ff)'}));});}
+    // NCCL 包（GPU↔GPU 双向）
+    if(commV>0.03){const e=NVLINE; const x=e.x1+(e.x2-e.x1)*pktPhase;
+      packetsG.appendChild(mk('circle',{cx:x,cy:210,r:6,fill:'var(--violet)',style:'filter:drop-shadow(0 0 5px #b78cff)'}));
+      const x2=e.x2-(e.x2-e.x1)*pktPhase;
+      packetsG.appendChild(mk('circle',{cx:x2,cy:210,r:6,fill:'var(--violet)',style:'filter:drop-shadow(0 0 5px #b78cff)'}));}
+  }
+
+  // ---------- 阶段步骤（按 token 组分层显示） ----------
+  const PH=D.phases||[];
+  document.getElementById('stepcount').textContent=PH.length;
+  const stepsBox=document.getElementById('steps');
+  const SHORT={host:'主机',kernel:'GPU 计算',wait:'过渡',gap:'测量空档'};
+  const stepEls=[];
+  let lastGroup=null;
+  PH.forEach((p,i)=>{
+    // 新的一组 → 插入组标题
+    if(p.group!==lastGroup){
+      lastGroup=p.group;
+      const g=document.createElement('div');g.className='grouphead '+(p.macro==='gap'?'gap':'');
+      g.textContent=p.group_label;
+      stepsBox.appendChild(g);
+    }
+    const el=document.createElement('div');el.className='step '+p.macro;el.dataset.i=i;
+    let extra='';
+    if(p.has_moe)extra+=' <span class="moe">·MoE</span>';
+    if(p.has_comm)extra+=' <span class="cm">·通信</span>';
+    el.innerHTML=`<span class="num">${i+1}</span><span class="lab">${SHORT[p.macro]||p.macro}${extra}</span><span class="ms">${p.ms.toFixed(0)}ms</span>`;
+    el.addEventListener('click',()=>gotoStep(i));
+    stepsBox.appendChild(el);
+    stepEls.push(el);
+  });
+
+  // ---------- 权重分布卡片（真实推导） ----------
+  (function(){
+    const W=D.meta&&D.meta.weights;
+    const card=document.getElementById('weights-card');
+    const list=document.getElementById('weights-list');
+    if(!W||!W.parts){ if(card)card.style.display='none'; return; }
+    const WC={embedding:'#39d0ff',attention:'#7CFFcb',dense_ffn:'#ffb13d',moe_experts:'#ff7eb6',lm_head:'#b78cff'};
+    list.innerHTML = W.parts.slice().sort((a,b)=>b.pct-a.pct).map(p=>
+      `<div class="wrow" data-key="${p.key}"><span class="dot" style="background:${WC[p.key]||'#b78cff'}"></span>`+
+      `<span class="wl">${p.label}</span>`+
+      `<span class="wv"><b>${p.per_gpu_gb.toFixed(2)}</b> GB · ${p.pct}%</span></div>`
+    ).join('') +
+      `<div class="wsum">TP=${W.tp} 切分 · 每卡推导 <b>${W.per_gpu_gb} GB</b>`+
+      (W.measured_per_gpu_gb?` · 实测 ${W.measured_per_gpu_gb} GB`:'')+
+      `<br>${W.params_b}B 参数 · ${W.dtype} · <b>MoE 专家占 ${(W.parts.find(x=>x.key==='moe_experts')||{}).pct}%</b></div>`;
+  })();
+
+  // ---------- DCGM 实测利用率卡片 ----------
+  (function(){
+    const G=D.meta&&D.meta.dcgm;
+    const card=document.getElementById('dcgm-card');
+    const list=document.getElementById('dcgm-list');
+    if(!G){ if(card)card.style.display='none'; return; }
+    const bar=(label,pct,col)=>`<div class="drow"><div class="dtop"><span class="dk">${label}</span><span class="dv">${pct}%</span></div><div class="dbar"><i style="width:${pct}%;background:${col}"></i></div></div>`;
+    list.innerHTML =
+      bar('SM 活跃率（SMACT）', G.sm_active_pct, 'var(--phos)') +
+      bar('SM 占用率（SMOCC）', G.sm_occupancy_pct, '#2fae6e') +
+      bar('HBM 显存活跃（DRAMA）', G.dram_active_pct, 'var(--violet)') +
+      `<div class="dnote">推理活跃期均值 · 每 ${G.interval_ms}ms 采样 · 卡 ${G.active_gpus.join('/')}<br>`+
+      `卡间 NVLink：${G.nvlink_active?'有流量':'无（A10G 走 PCIe，非 NVLink）'}</div>`;
+  })();
+
+  // ---------- 播放引擎（在当前阶段内推进游标；可单步/自动） ----------
+  let curStep=0, subStep=-1, playing=false, raf=null, lastTs=null, biPos=0, speed=1, pktPhase=0;
+  function applyStepText(i){
+    const p=PH[i];
+    // 按阶段切换子步集（Prefill / Decode），并更新管线节点标签
+    SUBSTEPS = subSetFor(p);
+    relabelPipeline(SUBSTEPS);
+    document.getElementById('stepno').textContent=i+1;
+    document.getElementById('d-title').textContent=`第 ${i+1} 步 · ${p.title}`;
+    document.getElementById('d-meta').textContent=`${p.t0.toFixed(1)} – ${p.t1.toFixed(1)} ms · 时长 ${p.ms.toFixed(1)} ms · 实测`;
+    document.getElementById('d-desc').textContent=p.desc;
+    renderOps(p);
+    stepEls.forEach((e,k)=>{e.classList.toggle('active',k===i);e.classList.toggle('done',k<i);});
+  }
+  // 操作类型 → 颜色（与 lane 配色呼应）
+  const OPCOL={'MoE 专家计算':'#ff7eb6','MoE 路由 (选专家)':'#ff7eb6','注意力计算':'#7CFFcb','矩阵乘法 GEMM':'#3dff9a',
+    '跨卡 All-Reduce':'#b78cff','层归一化 (RMSNorm)':'#2fae6e','激活函数 (SwiGLU)':'#2fae6e','Softmax':'#7CFFcb',
+    '数据搬运 (PCIe/显存)':'#39d0ff','逐元素运算':'#4a6b5e','词嵌入查表':'#39d0ff'};
+  // 层流水每步 → 配色（呼应操作类型）
+  const FLOWCOL={'①':'#2fae6e','②':'#3dff9a','③':'#7CFFcb','④':'#b78cff','⑤':'#2fae6e','⑥':'#ff7eb6','⑦':'#ff7eb6','⑧':'#b78cff'};
+  // 主机/过渡步「本阶段在做什么」：哪条链路在动、哪个在等
+  function renderHostNote(p){
+    const box=document.getElementById('host-note');
+    const rows=document.getElementById('hn-rows');
+    const isPrefill=p.group==='tok0';
+    const isHost=p.macro==='host';
+    const items = isHost ? [
+      {on:true, col:'var(--amber)', t:'CPU 在工作',
+       d: isPrefill ? '把整段输入提示 tokenize、组织成张量，并向 GPU 下发 kernel。'
+                    : '对上一个 token 的 logits 做采样得到新 token，再下发下一轮。'},
+      {on:true, col:'var(--cyan)', t:'PCIe 在搬运',
+       d:'输入张量 / 指令经 PCIe 从主机送进 GPU 显存。'},
+      {on:false, col:'var(--phos)', t:'GPU 在等待',
+       d:'kernel 还没下发，SM 阵列此刻基本空闲，等主机把活儿派下来。'},
+      {on:false, col:'var(--violet)', t:'卡间通信 空闲',
+       d:'没有跨卡 All-Reduce，NVLink/PCIe 互联此刻无流量。'},
+    ] : [
+      {on:false, col:'var(--dim)', t:'短暂过渡',
+       d:'层与层、或两次 forward 之间的空档，CPU 与 GPU 都基本空闲。'},
+    ];
+    rows.innerHTML=items.map(it=>
+      `<div class="hnrow ${it.on?'busy':'idle'}"><span class="hi" style="background:${it.col};color:${it.col}"></span>`+
+      `<span><span class="ht">${it.t}</span><span class="hd">${it.d}</span></span></div>`).join('');
+    box.style.display='block';
+  }
+  function renderOps(p){
+    const block=document.getElementById('ops-block'), list=document.getElementById('ops-list');
+    const title=document.getElementById('ops-title-text');
+    const rail=document.getElementById('ops-rail');
+    const ssCard=document.getElementById('substep-detail');
+    const hostNote=document.getElementById('host-note');
+    const n=subCount(p);
+    const ops=(p.ops||[]).filter(o=>o.ms>0.05);
+
+    if(n>0){
+      // GPU 计算步：显示流水轨（8/4 个节点）+ 当前子步详解 + 可展开真实统计
+      rail.style.display='flex';
+      ssCard.style.display='block';
+      hostNote.style.display='none';
+      rail.innerHTML=SUBSTEPS.slice(0,n).map((s,i)=>{
+        const col=SUBCOL[i];
+        return `<div class="railnode" data-i="${i}" title="${s.name}">`+
+          `<span class="rn" style="--c:${col}">${s.tag}</span></div>`+
+          (i<n-1?`<span class="railbar"></span>`:'');
+      }).join('');
+      // 让轨道节点也可点击跳子步
+      rail.querySelectorAll('.railnode').forEach(el=>{
+        el.addEventListener('click',()=>{ subStep=+el.dataset.i; render(biPos); updateNav(); updateSubText(); });
+      });
+      // 真实 kernel 统计折叠区
+      const opsHtml=ops.map(o=>{const col=OPCOL[o.op]||'#4a6b5e';
+        return `<div class="oprow mini"><span class="oname" style="color:${col}">${o.op}</span>`+
+          `<span class="ostat">×${o.count} · ${o.ms.toFixed(1)}ms</span></div>`;}).join('');
+      block.style.display='block';
+      title.innerHTML=`<b style="color:var(--phos)">每层 ${n} 个子步，本步重复 ${p.n_layers} 层</b>`;
+      list.innerHTML=`<details class="opsdetails"><summary>展开本步真实 kernel 统计（${ops.length} 类）</summary><div class="opsmini">${opsHtml}</div></details>`;
+      return;
+    }
+    // 非计算步：隐藏流水，先给「本阶段在做什么」，再列真实算子
+    rail.style.display='none'; ssCard.style.display='none';
+    renderHostNote(p);
+    if(!ops.length){ block.style.display='none'; return; }
+    block.style.display='block';
+    title.textContent='这一步实际执行的操作 · 真实 kernel';
+    const maxms=Math.max(...ops.map(o=>o.ms));
+    list.innerHTML=ops.slice(0,6).map(o=>{const col=OPCOL[o.op]||'#4a6b5e';
+      return `<div class="oprow"><div class="otop"><span class="oname" style="color:${col}">${o.op}</span>`+
+        `<span class="ostat">×${o.count} · ${o.ms.toFixed(1)}ms</span></div>`+
+        `<div class="obar"><i style="width:${(o.ms/maxms*100).toFixed(1)}%;background:${col}"></i></div>`+
+        `<div class="odesc">${o.desc}</div></div>`;}).join('');
+  }
+  // 进入某个宏观步。enterSub: 'first'=停在第一个子步, 'last'=停在最后子步, null=不进子步
+  function gotoStep(i, enterSub){
+    curStep=Math.max(0,Math.min(PH.length-1,i));
+    biPos=PH[curStep].b0;
+    const n=subCount(PH[curStep]);
+    if(n>0 && enterSub) subStep = (enterSub==='last') ? n-1 : 0;
+    else subStep=-1;
+    applyStepText(curStep);render(biPos);
+    updateSubText();
+    updateNav();
+  }
+  function updateNav(){
+    // 在最前/最后（含子步）时禁用对应按钮
+    const atStart = curStep<=0 && subStep<=0;
+    const lastPhase = PH.length-1;
+    const n=subCount(PH[curStep]);
+    const atEnd = curStep>=lastPhase && (n===0 || subStep>=n-1);
+    document.getElementById('prev').disabled=atStart;
+    document.getElementById('next').disabled=atEnd;
+    // 总进度：按「步 + 子步」细粒度推进
+    const sub=(n>0&&subStep>=0)?(subStep+1)/n:(curStep<lastPhase?0:1);
+    const frac=PH.length>1?(curStep+ (n>0?(subStep+1)/n:1))/PH.length:1;
+    const pe=document.getElementById('prog');if(pe)pe.style.width=(Math.min(1,frac)*100).toFixed(1)+'%';
+  }
+  function stepNext(){
+    const n=subCount(PH[curStep]);
+    if(n>0 && subStep < n-1){ subStep++; render(biPos); updateNav(); updateSubText(); return; }
+    if(curStep<PH.length-1){ gotoStep(curStep+1,'first'); updateSubText(); }
+  }
+  function stepPrev(){
+    const n=subCount(PH[curStep]);
+    if(n>0 && subStep>0){ subStep--; render(biPos); updateNav(); updateSubText(); return; }
+    if(curStep>0){ gotoStep(curStep-1,'last'); updateSubText(); }
+  }
+  // 更新当前子步详解卡片 + 轨道高亮 + 标题
+  function updateSubText(){
+    const p=PH[curStep], n=subCount(p);
+    if(n>0 && subStep>=0){
+      const s=SUBSTEPS[subStep], col=SUBCOL[subStep];
+      document.getElementById('d-title').innerHTML=`第 ${curStep+1} 步 · ${p.title}`;
+      // 子步详解卡片
+      const num=document.getElementById('ss-num');
+      num.textContent=s.tag; num.style.background=col;
+      document.getElementById('ss-name').textContent=s.name;
+      document.getElementById('ss-name').style.color=col;
+      document.getElementById('ss-short').textContent=s.short;
+      document.getElementById('ss-detail').textContent=s.detail;
+      document.getElementById('substep-detail').style.setProperty('--ssc',col);
+      // 轨道高亮
+      document.querySelectorAll('.railnode').forEach((el,i)=>el.classList.toggle('on',i===subStep));
+    }else{
+      document.getElementById('d-title').textContent=`第 ${curStep+1} 步 · ${p.title}`;
+    }
+  }
+  document.getElementById('next').addEventListener('click',stepNext);
+  document.getElementById('prev').addEventListener('click',stepPrev);
+  // 键盘导航：← → 翻步，空格播放/暂停（输入框聚焦时不拦截）
+  function onKey(e){
+    if(/INPUT|SELECT|TEXTAREA/.test((e.target&&e.target.tagName)||''))return;
+    if(e.key==='ArrowRight'){e.preventDefault();stepNext();}
+    else if(e.key==='ArrowLeft'){e.preventDefault();stepPrev();}
+    else if(e.key===' '){e.preventDefault();document.getElementById('play').click();}
+  }
+  document.addEventListener('keydown',onKey);
+  // 自动播放：按子步推进（每子步停留一小段）
+  let autoAcc=0;
+  function frame(ts){if(!lastTs)lastTs=ts;const dt=(ts-lastTs)/1000;lastTs=ts;
+    pktPhase=(pktPhase+dt*0.5)%1;
+    autoAcc+=dt*speed;
+    if(autoAcc>=0.7){               // 每 0.7s/speed 前进一子步
+      autoAcc=0;
+      const n=subCount(PH[curStep]);
+      const atEnd = curStep>=PH.length-1 && (n===0 || subStep>=n-1);
+      if(atEnd){ playing=false; document.getElementById('play').textContent='⏵ 重新播放'; updateNav(); return; }
+      stepNext();
+    }
+    render(biPos);
+    if(playing)raf=requestAnimationFrame(frame);
+  }
+  document.getElementById('play').addEventListener('click',()=>{
+    if(playing){playing=false;cancelAnimationFrame(raf);document.getElementById('play').textContent='⏵ 自动播放';return;}
+    // 已在末尾则从头(firstReal)重播
+    const n=subCount(PH[curStep]);
+    if(curStep>=PH.length-1 && (n===0||subStep>=n-1)) gotoStep(firstReal,'first');
+    playing=true;lastTs=null;autoAcc=0;document.getElementById('play').textContent='⏸ 暂停';raf=requestAnimationFrame(frame);
+  });
+  document.getElementById('reset').addEventListener('click',()=>{gotoStep(firstReal,'first');updateSubText();});
+  const sp=document.getElementById('speed'),spv=document.getElementById('speedv');
+  sp.addEventListener('input',()=>{speed=parseFloat(sp.value);spv.textContent=speed.toFixed(1)+'×';});
+  // 时间轴点击 → 跳到对应阶段
+
+  // 数据包持续流动（即使定格在某步）：独立动画循环只更新包位置
+  let pktRaf=null, pktLast=null, stopped=false;
+  function pktTick(ts){if(stopped)return;if(!pktLast)pktLast=ts;const dt=(ts-pktLast)/1000;pktLast=ts;
+    // 流水演示用较慢的相位（每 ~3.2s 走完一层 8 步），与数据包流动区分
+    pktPhase=(pktPhase+dt*0.31)%1;
+    if(!playing){
+      // 定格在某步时，仍持续驱动层流水动画
+      render(Math.floor(biPos));
+    }
+    pktRaf=requestAnimationFrame(pktTick);}
+  pktRaf=requestAnimationFrame(pktTick);
+
+  // ---------- 结论卡片注释 ----------
+  const moeB=D.breakdown.find(b=>b.kind==='moe_expert');
+  const commB=D.breakdown.find(b=>b.kind==='comm_allreduce');
+  document.getElementById('d-note').textContent=
+    `实测：MoE 专家计算占 GPU 工作的 ${moeB?moeB.pct:0}%（${moeB?moeB.ms.toFixed(1):0}ms），卡间 All-Reduce 累计 ${commB?commB.ms.toFixed(1):0}ms，集中在推理后段。`;
+
+  // 默认从第一个非"测量空档"步开始（即 Prefill 的 CPU 准备），跳过预热噪声
+  const firstReal = (()=>{const i=PH.findIndex(p=>p.macro!=='gap');return i<0?0:i;})();
+  gotoStep(firstReal,'first');
+
+  // 注册清理：切换数据集时取消动画循环与事件（事件挂在会被替换的节点上，clone 清除）
+  _activeCleanup=function(){
+    stopped=true; cancelAnimationFrame(raf); cancelAnimationFrame(pktRaf);
+    document.removeEventListener('keydown',onKey);
+    // 清除挂在这些节点上的事件监听（用克隆替换）
+    ['prev','next','play','reset','speed'].forEach(id=>{const el=document.getElementById(id);if(el)el.replaceWith(el.cloneNode(false));});
+  };
+}
+
+// ---------- 数据集加载器 ----------
+(function(){
+  const manifest = window.DATASET_MANIFEST || [];
+  const sel = document.getElementById('dataset');
+  const board = document.getElementById('board');
+  if(!manifest.length){ board.innerHTML='<div class="err">datasets.js 未找到或为空。请在 web/datasets.js 登记数据集。</div>'; return; }
+  manifest.forEach(d=>{const o=document.createElement('option');o.value=d.id;o.textContent=d.label;sel.appendChild(o);});
+
+  window.TRACE_DATASETS = window.TRACE_DATASETS || {};
+  function loadDataset(entry){
+    // 已加载过则直接构建
+    if(window.TRACE_DATASETS[entry.id]){ buildView(window.TRACE_DATASETS[entry.id]); return; }
+    const s=document.createElement('script');
+    s.src=entry.file;
+    s.onload=()=>{ const D=window.TRACE_DATASETS[entry.id]; if(D)buildView(D); else board.innerHTML='<div class="err">数据文件已加载，但未注册到 TRACE_DATASETS["'+entry.id+'"]。检查 data/'+entry.id+'.js 顶部赋值。</div>'; };
+    s.onerror=()=>{ board.innerHTML='<div class="err">加载失败：'+entry.file+'（确认文件存在）。</div>'; };
+    document.body.appendChild(s);
+  }
+  sel.addEventListener('change',()=>{const e=manifest.find(m=>m.id===sel.value);if(e)loadDataset(e);});
+  loadDataset(manifest[0]);   // 默认加载第一个
+})();
+</script>
+</body>
+</html>

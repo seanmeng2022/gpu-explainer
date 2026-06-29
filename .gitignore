@@ -1,0 +1,7 @@
+*.pem
+*.key
+aws/.instance.env
+traces/
+.claude/
+.DS_Store
+*.log
