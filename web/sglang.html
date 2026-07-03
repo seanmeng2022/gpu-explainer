@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SGLang 引擎 · 一个 LLM 推理请求是怎么被高效服务的</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e0d; --panel:#111816; --panel-2:#0d1413;
+    --ink:#d8e6e0; --dim:#8a9e96;
+    --sans:"Bricolage Grotesque","PingFang SC","Noto Sans SC",sans-serif;
+    --mono:"Space Mono","PingFang SC","Noto Sans SC",monospace;
+    --phos:#3dff9a; --amber:#ffb13d; --cyan:#39d0ff; --violet:#b78cff; --pink:#ff7eb6; --red:#ff5d5d;
+    --line:#223330; --grid:#1a2522;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #102b22 0%, transparent 55%),
+      radial-gradient(900px 500px at 0% 110%, #1a160a 0%, transparent 50%), var(--bg);
+    color:var(--ink); font-family:var(--mono); line-height:1.6; overflow-x:hidden;
+  }
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 1px,transparent 1px 3px);mix-blend-mode:overlay}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 26px}
+  ::selection{background:var(--phos);color:#04140c}
+
+  header{padding:48px 0 8px}
+  .kicker{font-size:12px;letter-spacing:.3em;color:var(--phos);text-transform:uppercase;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--phos);box-shadow:0 0 12px var(--phos);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  h1{font-family:var(--sans);font-weight:800;font-size:clamp(30px,5vw,54px);line-height:1.02;letter-spacing:-.02em;margin:14px 0 12px}
+  h1 em{font-style:normal;color:var(--phos);text-shadow:0 0 30px rgba(61,255,154,.35)}
+  .sub{max-width:800px;color:var(--dim);font-size:14px}
+  .sub b{color:var(--ink);font-weight:400;border-bottom:1px dashed var(--line)}
+
+  section{margin:44px 0}
+  .sectit{font-family:var(--sans);font-weight:800;font-size:clamp(22px,3vw,30px);letter-spacing:-.01em;line-height:1.1;display:flex;align-items:baseline;gap:12px}
+  .sectit .no{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--phos);opacity:.8}
+  .seclead{color:var(--dim);font-size:13.5px;margin:10px 0 0;max-width:780px}
+  .seclead b{color:var(--ink);font-weight:400}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px}
+  .card.glow{border-left:3px solid var(--phos)}
+  .card.cy{border-left:3px solid var(--cyan)} .card.am{border-left:3px solid var(--amber)}
+  .card.vi{border-left:3px solid var(--violet)} .card.pk{border-left:3px solid var(--pink)}
+  .card h3{font-family:var(--sans);font-size:17px;font-weight:800;margin-bottom:8px}
+  .card p{font-size:13px;color:#bcd0c8;margin:8px 0}
+  .card p b{color:var(--ink)}
+  code{font-family:var(--mono);background:var(--panel-2);border:1px solid var(--grid);border-radius:4px;padding:1px 6px;font-size:.9em;color:var(--cyan)}
+
+  /* 全景流水线 */
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin-top:20px}
+  .fstep{flex:1;min-width:120px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 14px;position:relative;transition:border-color .15s,background-color .15s;cursor:default}
+  .fstep:hover{border-color:var(--c);background:color-mix(in srgb,var(--c) 9%,var(--panel))}
+  .fstep .fn{font-size:11px;color:var(--c);font-weight:700;letter-spacing:.1em}
+  .fstep .ft{font-family:var(--sans);font-weight:800;font-size:14px;margin:3px 0 4px;color:var(--ink)}
+  .fstep .fd{font-size:11px;color:var(--dim);line-height:1.4}
+  .farrow{display:flex;align-items:center;color:var(--dim);font-size:16px;padding:0 6px}
+  .fdown{display:none;color:var(--dim);font-size:15px;text-align:center;width:100%;line-height:1}
+  @media(max-width:760px){.farrow{display:none}.fdown{display:block}.flow{gap:8px}.fstep{flex-basis:100%}}
+
+  /* 两栏对比 */
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+  @media(max-width:760px){.twocol{grid-template-columns:1fr}}
+  .half{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .half.bad{border-left:3px solid var(--red)} .half.good{border-left:3px solid var(--phos)}
+  .half h4{font-family:var(--sans);font-size:15px;font-weight:800;margin-bottom:4px}
+  .half .tagline{font-size:11px;color:var(--dim);margin-bottom:10px}
+  .half p{font-size:12.5px;color:#bcd0c8;line-height:1.6}
+  .half.bad h4{color:var(--red)} .half.good h4{color:var(--phos)}
+
+  /* ===== RadixAttention demo ===== */
+  .demo{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px;margin-top:18px;position:relative}
+  .demo .hint{font-size:12px;color:var(--dim);margin-bottom:18px}
+  .demo .hint b{color:var(--phos)}
+  .reqbar{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:18px}
+  .reqchip{font-family:var(--mono);font-size:12px;padding:8px 13px;border-radius:8px;cursor:pointer;transition:border-color .16s,background-color .16s,box-shadow .16s;
+    background:var(--panel-2);border:1.5px solid var(--line);color:#bcd0c8;user-select:none}
+  .reqchip:hover{border-color:var(--dim)}
+  .reqchip[aria-pressed="true"]{border-color:var(--cyan);background:color-mix(in srgb,var(--cyan) 16%,var(--panel-2));color:#fff;box-shadow:0 0 16px rgba(57,208,255,.3)}
+  .reqchip b{color:var(--cyan)}
+  .reqchip:disabled{opacity:.55;cursor:wait}
+  /* 树形渲染：嵌套 DOM + 左侧连线 */
+  .tree{margin-top:6px;font-family:var(--mono);font-size:12.5px;position:relative;min-height:56px}
+  .tn{position:relative;margin:6px 0 6px 20px;padding-left:16px}
+  .tn::before{content:"";position:absolute;left:0;top:-8px;bottom:0;width:1px;background:var(--grid)}
+  .tn::after{content:"";position:absolute;left:0;top:15px;width:14px;height:1px;background:var(--grid)}
+  .tn:last-child::before{bottom:auto;height:23px}
+  .tn.root{margin-left:0;padding-left:0}
+  .tn.root::before,.tn.root::after{display:none}
+  .tnbox{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:7px;border:1.5px solid var(--grid);background:var(--panel-2);transform-origin:left center;will-change:transform}
+  .tnbox .seg{font-weight:700;color:#bcd0c8}
+  .tnbox .tok{font-size:10px;color:var(--dim)}
+  .tn.root>.tnbox{border-style:dashed;color:var(--dim);font-size:10.5px;padding:3px 9px}
+  .tn.cached>.tnbox{border-color:var(--phos);background:color-mix(in srgb,var(--phos) 14%,var(--panel-2))}
+  .tn.cached>.tnbox .seg{color:var(--phos)}
+  .tn.fresh>.tnbox{border-color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,var(--panel-2))}
+  .tn.fresh>.tnbox .seg{color:var(--amber)}
+  .tnfloat{position:absolute;font-size:10.5px;font-weight:700;pointer-events:none;white-space:nowrap;z-index:6}
+  /* 命中率双色比例条 */
+  .rs-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:#0a100e;border:1px solid var(--grid);margin:9px 0 7px}
+  .rs-bar i{display:block;height:100%;width:0;transition:width .5s ease}
+  .rs-bar .bh{background:var(--phos)} .rs-bar .bf{background:var(--amber)}
+  .radixlegend{display:flex;gap:18px;flex-wrap:wrap;margin-top:16px;font-size:11px;color:var(--dim)}
+  .radixlegend span{display:inline-flex;align-items:center;gap:6px}
+  .radixlegend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .radixstat{margin-top:16px;background:var(--panel-2);border:1px solid var(--grid);border-left:3px solid var(--phos);border-radius:10px;padding:13px 16px;font-size:12.5px;color:#bcd0c8;line-height:1.65}
+  .radixstat b{color:#fff}
+
+  /* ===== 调度器时间线 demo ===== */
+  .scheddemo{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px}
+  .schedlane{display:grid;grid-template-columns:54px 1fr;gap:10px;align-items:center;margin-bottom:11px}
+  .schedlane .ll{font-size:11px;color:var(--dim);text-align:right;letter-spacing:.04em}
+  .track{position:relative;height:36px;background:#0a100e;border:1px solid var(--grid);border-radius:7px;overflow:hidden}
+  .blk{position:absolute;top:4px;height:28px;border-radius:5px;display:flex;align-items:center;justify-content:flex-start;padding-left:5px;
+    font-size:9.5px;font-weight:700;color:#04140c;white-space:nowrap;overflow:hidden;transform-origin:left center}
+  .blk.cpu{background:linear-gradient(90deg,var(--amber),#ffd27a);color:#1a1204}
+  .blk.gpu{background:linear-gradient(90deg,var(--cyan),var(--phos));color:#04140c}
+  .schedaxis{font-size:10px;color:var(--dim);text-align:right;margin-top:4px}
+  .schednote{margin-top:18px;background:var(--panel-2);border:1px solid var(--grid);border-left:3px solid var(--amber);border-radius:10px;padding:14px 17px;font-size:12.5px;color:#bcd0c8;line-height:1.7;min-height:64px}
+  .schednote .nt{font-family:var(--sans);font-weight:800;font-size:13px;color:var(--amber);margin-bottom:5px}
+  .schednote b{color:#fff}
+  .schedgrp{border:1px solid var(--grid);border-radius:10px;padding:12px 14px 8px;margin-bottom:14px;transition:border-color .2s,opacity .2s}
+  .schedgrp.hl{border-color:var(--phos)}
+  .schedgrp .gt{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--dim);margin-bottom:9px}
+  .schedgrp.hl .gt{color:var(--phos)}
+  .playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--phos);box-shadow:0 0 10px var(--phos);z-index:4;pointer-events:none}
+  .schedwrap{position:relative}
+  .idletag{position:absolute;top:7px;font-size:9.5px;font-weight:700;color:var(--red);letter-spacing:.08em;opacity:0;pointer-events:none;z-index:3}
+  .schedres{display:flex;gap:26px;flex-wrap:wrap;margin-top:6px;font-size:12px;color:var(--dim)}
+  .schedres b{font-size:18px;font-family:var(--mono);color:var(--ink)}
+  .schedres .win b{color:var(--phos)}
+
+  /* ===== continuous batching 双泳道 ===== */
+  .cbstage{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px}
+  .cblane{border:1px solid var(--grid);border-radius:10px;padding:13px 15px 11px;margin-bottom:14px;position:relative}
+  .cblane .cbt{font-size:11.5px;font-weight:700;letter-spacing:.05em;margin-bottom:10px}
+  .cblane.static .cbt{color:var(--red)} .cblane.cont .cbt{color:var(--phos)}
+  .cbslots{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .cbslot{position:relative;height:52px;background:#0a100e;border:1px solid var(--grid);border-radius:8px;overflow:hidden}
+  .cbslot .sl{position:absolute;top:2px;left:6px;font-size:8.5px;color:var(--dim);letter-spacing:.08em;z-index:1}
+  .cbslot.idle{border-color:color-mix(in srgb,var(--red) 45%,var(--grid));
+    background:repeating-linear-gradient(135deg,#140b0b 0 6px,#0a100e 6px 12px)}
+  .cbslot.idle::after{content:"IDLE";position:absolute;right:6px;top:2px;font-size:8.5px;font-weight:700;color:var(--red);letter-spacing:.1em}
+  .cbreq{position:absolute;inset:14px 5px 5px;border-radius:6px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;
+    font-size:11px;font-weight:700;color:#04140c;will-change:transform,opacity}
+  .cbreq .rp{width:78%;height:4px;border-radius:2px;background:rgba(0,0,0,.35);overflow:hidden}
+  .cbreq .rp i{display:block;height:100%;width:0;background:rgba(255,255,255,.85);border-radius:2px}
+  .cbmeta{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-top:10px}
+  .cbqueue{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--dim);min-height:30px}
+  .cbq{width:30px;height:24px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;color:#04140c}
+  .cbstats{display:flex;gap:22px;font-size:11px;color:var(--dim)}
+  .cbstats b{display:block;font-size:17px;font-family:var(--mono);color:var(--ink);line-height:1.2}
+  .cbstats .u b{color:var(--phos)}
+
+  /* ===== §06 请求的一生 ===== */
+  .lifefig{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px;position:relative}
+  .lifeflow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0}
+  .lstep{flex:1;min-width:118px;background:var(--panel-2);border:1px solid var(--grid);border-radius:10px;padding:11px 12px;position:relative;transition:border-color .2s,background-color .2s,opacity .2s;opacity:.55}
+  .lstep .fn{font-size:11px;color:var(--c);font-weight:700;letter-spacing:.1em}
+  .lstep .ft{font-family:var(--sans);font-weight:800;font-size:13px;margin:3px 0 3px;color:var(--ink)}
+  .lstep .fd{font-size:11px;color:var(--dim);line-height:1.45;max-height:0;overflow:hidden;transition:max-height .35s ease}
+  .lstep.lit{opacity:1;border-color:var(--c);background:color-mix(in srgb,var(--c) 9%,var(--panel-2));box-shadow:0 0 14px color-mix(in srgb,var(--c) 22%,transparent)}
+  .lstep.lit .fd{max-height:80px}
+  @media(max-width:760px){.lifeflow{gap:8px}.lstep{flex-basis:100%;opacity:.8}.lstep .fd{max-height:none}}
+
+  /* ===== §05 通信微动画 ===== */
+  .commfig{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:10px;color:var(--dim)}
+  .commfig b{font-family:var(--mono);font-size:13px;color:var(--red)}
+  .cut.dpa .commfig b{color:var(--phos)}
+  .cutgpu{will-change:transform}
+  .tbostrip{display:flex;flex-direction:column;gap:4px;margin-top:9px}
+  .tbolane{display:flex;gap:3px;height:10px}
+  .tbolane i{display:block;height:100%;border-radius:2px;flex:1}
+  .tbolane .tc{background:color-mix(in srgb,var(--cyan) 55%,#0a100e)}
+  .tbolane .tm{background:color-mix(in srgb,var(--pink) 55%,#0a100e)}
+
+  /* 交互索引 */
+  .demoindex{margin-top:14px;font-size:12px;color:var(--dim);display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+  .demoindex a{color:var(--phos);text-decoration:none;border-bottom:1px dashed color-mix(in srgb,var(--phos) 45%,transparent)}
+  .demoindex a:hover{border-bottom-style:solid}
+  details.fold{margin-top:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
+  details.fold summary{cursor:pointer;padding:12px 16px;font-size:12.5px;color:#bcd0c8;font-weight:700;list-style:none}
+  details.fold summary::before{content:"▸ ";color:var(--amber)}
+  details.fold[open] summary::before{content:"▾ "}
+  details.fold .callout{margin:0 12px 12px;border-radius:8px}
+
+  /* 角色分工 grid */
+  .roles{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:18px}
+  @media(max-width:680px){.roles{grid-template-columns:1fr}}
+  .rolec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;border-top:3px solid var(--c)}
+  .rolec .rl{font-family:var(--sans);font-weight:800;font-size:15px;color:var(--c)}
+  .rolec .rs{font-size:11px;color:var(--dim);letter-spacing:.06em;margin:2px 0 10px;text-transform:uppercase}
+  .rolec .rm{font-size:12.5px;color:#bcd0c8;line-height:1.6}
+  .rolec .rm b{color:var(--ink)}
+
+  /* 速查表 */
+  table.spec{width:100%;border-collapse:collapse;margin-top:16px;font-size:12.5px}
+  table.spec th,table.spec td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.spec th{color:var(--dim);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;font-weight:700}
+  table.spec td:first-child{color:#bcd0c8;white-space:nowrap}
+  table.spec td.v{color:var(--cyan);font-family:var(--mono)}
+  table.spec tr:hover td{background:rgba(61,255,154,.04)}
+
+  /* ===== 启动命令注解块 ===== */
+  .launch{background:#070b0a;border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-top:18px;overflow-x:auto}
+  .launch .lc-head{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  .launch .lc-head::before{content:"$";color:var(--phos);font-weight:700}
+  .lcmd{font-family:var(--mono);font-size:12.5px;line-height:1.5;min-width:520px}
+  .lcrow{display:grid;grid-template-columns:minmax(220px,auto) 1fr;gap:14px;padding:5px 0;border-top:1px dashed transparent;transition:border-color .15s,background-color .15s;cursor:default}
+  .lcrow:hover{border-top-color:var(--grid);background:rgba(61,255,154,.03)}
+  .lcrow .arg{white-space:pre;color:var(--ink)}
+  .lcrow .arg .flag{color:var(--cyan)} .lcrow .arg .val{color:var(--amber)} .lcrow .arg .base{color:var(--phos)}
+  .lcrow .ann{font-size:11px;color:var(--dim);line-height:1.5;align-self:center}
+  .lcrow .ann b{color:#bcd0c8;font-weight:400}
+  .lcrow .ann a.ref{color:var(--phos);font-size:11px;letter-spacing:.04em;text-decoration:none;border-bottom:1px dashed color-mix(in srgb,var(--phos) 45%,transparent)}
+  .lcrow .ann a.ref:hover{border-bottom-style:solid}
+  @media(max-width:640px){
+    .lcmd{min-width:0}
+    .lcrow{grid-template-columns:1fr;gap:3px;border-top:1px dashed var(--grid)}
+    .lcrow .arg{white-space:pre-wrap}
+  }
+
+  /* ===== KV "抽屉" 图示（MLA / DPA）===== */
+  .drawerfig{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0 6px}
+  @media(max-width:820px){.drawerfig{grid-template-columns:1fr}}
+  .dpanel{background:var(--panel-2);border:1px solid var(--grid);border-radius:10px;padding:14px 15px;border-top:3px solid var(--c)}
+  .dpanel .dh{font-family:var(--sans);font-weight:800;font-size:12.5px;color:var(--c);display:flex;align-items:center;gap:6px;line-height:1.25}
+  .dpanel .dsub{font-size:11px;color:var(--dim);margin:3px 0 11px}
+  .dwgpu{display:flex;align-items:center;gap:7px;margin:5px 0;font-size:11px}
+  .dwgpu .gl{color:var(--dim);width:42px;flex-shrink:0;font-family:var(--mono)}
+  .dwboxes{display:flex;flex-wrap:wrap;gap:4px}
+  .kv{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-family:var(--mono);border:1px solid var(--grid);white-space:nowrap}
+  .kv.head{border-color:var(--cyan);background:color-mix(in srgb,var(--cyan) 16%,var(--panel-2));color:#cdeeff}
+  .kv.dup{border-color:var(--red);background:color-mix(in srgb,var(--red) 16%,var(--panel-2));color:#ffc9c9}
+  .kv.req{border-color:var(--phos);background:color-mix(in srgb,var(--phos) 16%,var(--panel-2));color:#dffaed}
+  .dpanel .dconc{font-size:11px;color:#bcd0c8;margin-top:11px;border-top:1px dashed var(--grid);padding-top:9px;line-height:1.5}
+  .dpanel .dconc b{color:var(--ink)}
+
+  /* ===== TP vs DPA 「切什么」对比图 ===== */
+  .cutfig{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0 6px}
+  @media(max-width:760px){.cutfig{grid-template-columns:1fr}}
+  .cut{background:var(--panel-2);border:1px solid var(--grid);border-radius:11px;padding:16px 17px;border-top:3px solid var(--c)}
+  .cut .ch{font-family:var(--sans);font-weight:800;font-size:14px;color:var(--c);line-height:1.25}
+  .cut .csub{font-size:11px;color:var(--dim);margin:3px 0 13px;letter-spacing:.02em}
+  .cut .creq{font-size:11px;color:var(--dim);margin-bottom:8px}
+  .cut .creq b{color:#bcd0c8}
+  .cutcards{display:flex;flex-direction:column;gap:7px}
+  .cutgpu{display:flex;align-items:center;gap:8px;background:#0a100e;border:1px solid var(--grid);border-radius:7px;padding:7px 10px}
+  .cutgpu .cg{font-family:var(--mono);font-size:10px;color:var(--cyan);width:34px;flex-shrink:0}
+  .cutgpu .cwork{display:flex;flex-wrap:wrap;gap:4px;flex:1}
+  .cwk{font-size:9px;font-family:var(--mono);padding:2px 7px;border-radius:4px;white-space:nowrap}
+  .cwk.part{border:1px dashed var(--amber);color:var(--amber)}      /* TP：一个请求的一部分 */
+  .cwk.full{border:1px solid var(--phos);background:color-mix(in srgb,var(--phos) 14%,var(--panel-2));color:#dffaed} /* DPA：完整请求 */
+  .cut .ccomm{font-size:11px;margin-top:10px;padding-top:9px;border-top:1px dashed var(--grid);line-height:1.5}
+  .cut .ccomm b{color:var(--ink)}
+  .cut.tp .ccomm{color:#ffcaca}    /* 要通信 */
+  .cut.dpa .ccomm{color:#bfe9cf}   /* 不通信 */
+
+  /* 分组参数表 */
+  .pgroup{font-family:var(--sans);font-weight:800;font-size:14px;color:var(--c,var(--cyan));margin:24px 0 2px;display:flex;align-items:center;gap:9px}
+  .pgroup::before{content:"";width:8px;height:8px;border-radius:2px;background:var(--c,var(--cyan))}
+  table.args{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+  table.args th,table.args td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.args th{color:var(--dim);font-size:10px;letter-spacing:.07em;text-transform:uppercase;font-weight:700}
+  table.args td.flag{color:var(--cyan);font-family:var(--mono);white-space:nowrap}
+  table.args td.def{color:var(--amber);font-family:var(--mono);white-space:nowrap;font-size:11px}
+  table.args td.desc{color:#bcd0c8;line-height:1.55}
+  table.args tr:hover td{background:rgba(57,208,255,.045)}
+
+  .callout{background:linear-gradient(180deg,rgba(255,255,255,.025),transparent);border:1px solid var(--line);border-left:3px solid var(--cyan);border-radius:10px;padding:15px 18px;margin-top:16px;font-size:12.5px;color:#bcd0c8;line-height:1.7}
+  .callout b{color:var(--ink)}
+  .callout .ct{font-family:var(--sans);font-weight:800;color:var(--cyan);font-size:13px;margin-bottom:5px;display:block}
+  .callout a{color:var(--cyan)}
+
+  .takeaway{background:var(--panel);border:1px solid var(--phos);border-radius:14px;padding:26px;margin-top:18px;text-align:center}
+  .takeaway p{font-size:15px;color:var(--ink);line-height:1.7;max-width:820px;margin:0 auto}
+  .takeaway p em{font-style:normal;color:var(--phos)}
+
+  footer{border-top:1px solid var(--line);margin-top:48px;padding:24px 0 64px;color:var(--dim);font-size:12px}
+  footer b{color:var(--phos)} footer a{color:var(--cyan);text-decoration:none}
+  footer a:hover{text-decoration:underline}
+
+  @media (prefers-reduced-motion: reduce){
+    .kicker .dot{animation:none}
+    *,*::before,*::after{transition-duration:.01ms !important;animation-duration:.01ms !important}
+    .lstep{opacity:1}
+    .lstep .fd{max-height:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker"><span class="dot"></span> GPU EXPLAINER · SGLANG 引擎</div>
+    <h1>模型只管算一层 forward，<br><em>SGLang 管把请求喂得又快又满</em></h1>
+    <p class="sub">前面几页讲的是<b>模型本身</b>怎么算（注意力、MoE）。但真把一个模型变成能扛住成千上万并发的<b>线上服务</b>，瓶颈往往不在 GPU 算得多快，而在 <b>CPU 怎么调度、KV cache 怎么复用、batch 怎么组</b>。SGLang 就是干这个的<b>推理服务引擎</b>——它的三板斧是 <b>RadixAttention</b>（前缀复用）、<b>零开销调度器</b>（CPU 不拖 GPU 后腿）、<b>continuous batching</b>（持续组 batch）。本页把这三件事拆开看。</p>
+    <div class="demoindex">▶ 5 个可交互演示：
+      <a href="#sec-radix">radix tree 生长</a> ·
+      <a href="#sec-sched">调度重叠时间线</a> ·
+      <a href="#sec-batch">双泳道 batch</a> ·
+      <a href="#sec-parallel">TP 通信脉冲</a> ·
+      <a href="#sec-life">请求的一生</a>
+    </div>
+  </header>
+
+  <!-- ===== 1. 定位 ===== -->
+  <section>
+    <div class="sectit"><span class="no">01</span>SGLang 在整个栈里的位置</div>
+    <p class="seclead">一个推理引擎（SGLang / vLLM / TGI）夹在<b>用户请求</b>和<b>裸 GPU kernel</b> 之间。它不改模型的数学，只负责：把请求排进 batch、管显存、复用缓存、把活塞满 GPU。SGLang 的特色是<b>后端运行时 + 前端语言协同设计</b>。</p>
+    <div class="flow" id="flow"></div>
+    <div class="callout">
+      <span class="ct">一句话区分"模型"和"引擎"</span>
+      <b>模型</b>（DeepSeek、Llama）决定"一次 forward 算什么"；<b>引擎</b>（SGLang）决定"什么时候、为谁、和谁拼在一起算这次 forward"。同一个模型，换个引擎，吞吐能差好几倍——差的全是 CPU 侧的调度与缓存功夫。本页讲的就是这部分。
+    </div>
+  </section>
+
+  <!-- ===== 2. RadixAttention ===== -->
+  <section id="sec-radix">
+    <div class="sectit"><span class="no">02</span>RadixAttention：别重算别人算过的前缀 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">真实负载里大量请求<b>共享前缀</b>：同一个 system prompt、多轮对话的历史、RAG 里同一段文档、agent 里同一套工具定义。朴素引擎对每个请求把整段 prompt 的 KV 从头算一遍——纯属浪费。SGLang 把所有请求的 token 序列存进一棵 <b>radix tree（基数树）</b>，<b>相同前缀的 KV cache 只算一次、之后全部命中复用</b>。点下面的请求，看哪些前缀是缓存命中（绿）、哪些是新算（黄）。</p>
+
+    <div class="demo" id="radixdemo">
+      <div class="hint">&gt;_ 按顺序点请求 <b>A → B → C → D</b>，看 radix tree 怎么长出来、后来的请求怎么蹭前面缓存好的前缀。已发出的请求可以<b>重发</b>——全路径命中，一个 token 都不用算。</div>
+      <div class="reqbar" id="reqbar"></div>
+      <div class="tree" id="tree"></div>
+      <div class="radixlegend">
+        <span><i style="background:color-mix(in srgb,var(--phos) 50%,#0a100e);border:1px solid var(--phos)"></i> 缓存命中（KV 直接复用，0 prefill）</span>
+        <span><i style="background:color-mix(in srgb,var(--amber) 50%,#0a100e);border:1px solid var(--amber)"></i> 新算（要跑 prefill）</span>
+      </div>
+      <div class="radixstat" id="radixstat">
+        <div id="rs-text">radix tree 为空。<b>点 A</b>：它是第一个请求，整段都得新算（prefill）。</div>
+        <div class="rs-bar"><i class="bh" id="rs-hit"></i><i class="bf" id="rs-fresh"></i></div>
+        <div style="font-size:11.5px">前缀复用率 <b id="rs-pct">0</b>%　·　命中 <b id="rs-hitn" style="color:var(--phos)">0</b> tok　·　新算 <b id="rs-freshn" style="color:var(--amber)">0</b> tok</div>
+      </div>
+    </div>
+
+    <div class="card glow">
+      <h3>为什么用"基数树"，而不是普通的哈希缓存？</h3>
+      <p>普通缓存只能整段命中（key 一样才算 hit）。而 prompt 是<b>逐 token 共享</b>的——"你是一个助手。"和"你是一个助手。请翻译"共享前 6 个字。radix tree 把公共前缀压成<b>同一条路径</b>，新请求沿树往下走，能匹配多深就复用多深，<b>剩下的尾巴才去算 prefill</b>。这也是为什么 prefix 命中率对吞吐影响巨大——命中得越深，省掉的 prefill 越多。</p>
+      <p style="color:var(--dim)">注意：radix tree 节点上挂的是 <b>KV cache 的物理页指针</b>，不是文本。缓存满了按 LRU 淘汰叶子节点。SGLang 后来还把它扩成多层 <b>HiCache</b>（GPU → CPU 内存 → 外部存储三级），冷前缀下沉、热前缀留在显存。</p>
+    </div>
+    <div class="callout" style="border-left-color:var(--amber)">
+      <span class="ct" style="color:var(--amber)">命中率会"塌方"——前缀顺序必须一致</span>
+      radix tree 是<b>严格前缀匹配</b>：只要开头差一个 token（比如把 system prompt 和用户内容拼接顺序换了、或时间戳混进了前缀），整条路径就匹配不上，<b>退化成全量 prefill</b>。所以工程上要把<b>固定不变的内容放最前面</b>、动态内容放后面，才能稳定吃到缓存。
+    </div>
+  </section>
+
+  <!-- ===== 3. 零开销调度器 ===== -->
+  <section id="sec-sched">
+    <div class="sectit"><span class="no">03</span>零开销调度器：别让 CPU 把 GPU 晾在那 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">每跑一步 forward，CPU 都得先干一堆活：决定这步组哪些请求、分配 KV 显存、做 radix 前缀匹配、准备 kernel 参数。<b>朴素做法是串行的</b>——CPU 准备完，GPU 才开算；GPU 算完，CPU 再准备下一步。一个没优化的引擎能把<b>近一半时间花在 CPU 上</b>，GPU 干等。SGLang 的解法：<b>让 CPU 提前一个 batch 干活，和 GPU 计算重叠起来</b>（overlap scheduler，v0.4 起默认开启）。按 ▶ 播放，同一根播放头从左到右扫过两种模式，块随扫过逐步"长"出来：</p>
+
+    <div class="scheddemo" id="scheddemo">
+      <div class="schedwrap" id="schedwrap">
+        <div class="schedgrp" id="grp-serial">
+          <div class="gt">朴素：串行（--disable-overlap-schedule）</div>
+          <div class="schedlane">
+            <div class="ll">CPU<br>调度</div>
+            <div class="track" id="track-s-cpu"></div>
+          </div>
+          <div class="schedlane">
+            <div class="ll">GPU<br>forward</div>
+            <div class="track" id="track-s-gpu"></div>
+          </div>
+        </div>
+        <div class="schedgrp hl" id="grp-overlap">
+          <div class="gt">SGLang：重叠调度（默认）</div>
+          <div class="schedlane">
+            <div class="ll">CPU<br>调度</div>
+            <div class="track" id="track-o-cpu"></div>
+          </div>
+          <div class="schedlane">
+            <div class="ll">GPU<br>forward</div>
+            <div class="track" id="track-o-gpu"></div>
+          </div>
+        </div>
+      </div>
+      <div class="schedres">
+        <div>串行总耗时 <b id="res-serial">—</b></div>
+        <div class="win">重叠总耗时 <b id="res-overlap">—</b></div>
+        <div>提前 <b id="res-save" style="color:var(--phos)">—</b> 单位</div>
+      </div>
+      <div class="schedaxis" id="schedaxis"></div>
+      <div class="schednote" id="schednote"></div>
+    </div>
+
+    <div class="card cy">
+      <h3>怎么做到的：调度器"跑在 GPU 前面一步"</h3>
+      <p>关键 trick：CPU 不等 GPU 这一步的结果，就先去准备<b>下一步</b>的 batch 元数据。可第 N+1 步的输入不正是第 N 步刚生成的 token 吗？SGLang 用 <b>future token（占位的未来 token）</b>解依赖：先用占位符把下一步的 batch 排好、显存分好，等 GPU 真吐出第 N 步的 token，再把占位符替换成真值。配合精心安排的 CUDA event 同步，GPU 就能<b>一步接一步永不停转</b>。官方实测约 +1.1× 吞吐。</p>
+      <p style="color:var(--dim)">这思路和模型本身的 <b>CUDA graph</b>、<b>continuous batching</b> 是配套的：CUDA graph 把每步的 kernel 序列录下来重放、砍掉逐 kernel 的 launch 开销；overlap scheduler 把"组下一个 batch"这件 CPU 活藏到 GPU 算的时间里。两个一起，CPU 才彻底不拖后腿。</p>
+    </div>
+  </section>
+
+  <!-- ===== 4. Continuous batching ===== -->
+  <section id="sec-batch">
+    <div class="sectit"><span class="no">04</span>Continuous batching：每步都重新组队 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">调度器调度的"batch"不是训练里那种"凑够 N 个一起算"的静态批。线上请求随时来、随时完成、长度还都不一样。SGLang 维护一个 <b>running batch</b>，<b>每生成一个 token 就重新决定谁进谁出</b>——完成的请求立刻让位，新来的请求填进空槽。下面 4 个 GPU 槽位、上下两种策略跑同一批请求，盯着右边的利用率数字看：</p>
+
+    <div class="cbstage" id="cbstage">
+      <div class="cblane static">
+        <div class="cbt">✕ 静态 batch：整批等最慢的</div>
+        <div class="cbslots" id="cb-static-slots"></div>
+      </div>
+      <div class="cblane cont">
+        <div class="cbt">✓ Continuous batching：完成即补位</div>
+        <div class="cbslots" id="cb-cont-slots"></div>
+      </div>
+      <div class="cbmeta">
+        <div class="cbqueue" id="cb-queue"><span>等待队列：</span></div>
+        <div class="cbstats">
+          <div>静态槽位利用率 <b id="cb-util-s" style="color:var(--red)">100%</b></div>
+          <div class="u">continuous 利用率 <b id="cb-util">100%</b></div>
+          <div>完成 静态 <b id="cb-done-s">0</b></div>
+          <div>完成 continuous <b id="cb-done-c">0</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="twocol">
+      <div class="half bad">
+        <h4>✕ 静态 batch（不能用）</h4>
+        <div class="tagline">凑够一批 → 一起算到全完 → 换下一批</div>
+        <p>得等最慢的那个请求生成完，整批才释放。短请求被长请求拖着陪跑，GPU 槽位大量空转，延迟还高。</p>
+      </div>
+      <div class="half good">
+        <h4>✓ Continuous batching</h4>
+        <div class="tagline">每个 token 后重新组 batch</div>
+        <p>A 生成完立刻移出、空槽马上塞进新来的 D。GPU 始终满载，新请求几乎零排队。这是现代推理引擎的标配。</p>
+      </div>
+    </div>
+    <div class="callout">
+      <span class="ct">和 Prefill / Decode 两阶段的关系</span>
+      新到的请求要先 <b>Prefill</b>（一次性算完整段输入的 KV，算力重），之后才进入逐 token 的 <b>Decode</b>（复用 KV，访存重）。这两类活的特性不同，调度器要决定怎么拼——比如 <b>chunked prefill</b> 把长 prefill 切片，插进 decode 步里，避免一个大 prefill 把所有人的 decode 卡住。<a href="index.html">→ 在真实数据流页面看 Prefill/Decode 的实测 trace</a>，那里的步骤正是 SGLang 内置 torch.profiler 抓出来的。
+    </div>
+  </section>
+
+  <!-- ===== 5. MoE 的并行 ===== -->
+  <section id="sec-parallel">
+    <div class="sectit"><span class="no">05</span>多卡并行：TP / DP / EP 怎么选 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">DeepSeek、Mixtral 这类 <b>MoE</b> 模型动辄几百 GB，单卡装不下，得切到多张卡。<b>关键认知：TP/DP/EP 不是三选一，而是给模型的不同部分分别选、组合起来用</b>——attention 层走 TP 或 DP，MoE 专家层走 EP。这也是真实配置里 <code>--tp 8 --dp-size 8 --ep 8</code> 能同时出现的原因。</p>
+    <div class="roles">
+      <div class="rolec" style="--c:var(--cyan)">
+        <div class="rl">TP · 张量并行</div>
+        <div class="rs">Tensor Parallelism</div>
+        <div class="rm">把<b>每一层的权重矩阵</b>按行/列切到多张卡，每张卡算一片，再 <b>all-reduce</b> 合起来。每步都通信，最好走 <b>NVLink</b>。单卡装不下 / 低并发求低延迟时用。</div>
+      </div>
+      <div class="rolec" style="--c:var(--pink)">
+        <div class="rl">DP · 数据并行</div>
+        <div class="rs">Data Parallelism</div>
+        <div class="rm">把<b>整个模型复制</b>多份（每份都有<b>完整参数</b>），每份独立处理不同批请求，副本间几乎不通信。<b>高并发求吞吐</b>时用，吞吐近线性扩展（配 SGLang Router 分流）。<span style="color:var(--dim)">注意：和下面「问题一」的 <b>DP Attention（DPA）不是一回事</b>，见辨析。</span></div>
+      </div>
+      <div class="rolec" style="--c:var(--violet)">
+        <div class="rl">EP · 专家并行</div>
+        <div class="rs">Expert Parallelism</div>
+        <div class="rm">MoE 专属：把<b>不同的专家</b>放到不同卡上。token 路由到哪个专家，就把它的激活值 <b>all-to-all</b> 发到那张卡，算完再发回。专家分散，显存压力小，但通信量大。</div>
+      </div>
+      <div class="rolec" style="--c:var(--amber)">
+        <div class="rl">PD · 分离</div>
+        <div class="rs">Prefill / Decode Disaggregation</div>
+        <div class="rm">把<b>算力重的 Prefill</b> 和<b>访存重的 Decode</b> 放到不同的 GPU 池子，各自用最优配置，互不干扰。SGLang 在 96 张 H100 上演示过 PD 分离 + 大规模 EP。</div>
+      </div>
+      <div class="rolec" style="--c:var(--phos)">
+        <div class="rl">通信重叠</div>
+        <div class="rs">TBO / SBO Overlap</div>
+        <div class="rm">EP 的 all-to-all 通信很贵。SGLang 用 <b>双批重叠（TBO）</b>把通信藏到另一批的计算后面，<code>--enable-two-batch-overlap</code> 最多再 ~2× 吞吐。和 §03 的思路一脉相承：能藏的开销都藏起来。</div>
+        <div class="tbostrip" id="tbostrip" title="两批交错：一批算（青）时另一批通信（粉）">
+          <div class="tbolane" id="tbo-a"></div>
+          <div class="tbolane" id="tbo-b"></div>
+        </div>
+      </div>
+    </div>
+    <div class="callout" style="border-left-color:var(--violet)">
+      <span class="ct" style="color:var(--violet)">本项目的实测落点</span>
+      实测跑的是 <b>DeepSeek-V2-Lite, TP=2, 2×A10G</b>：每卡权重 14.5GB（MoE 专家占 95%），SM 活跃 ~62%、HBM 活跃 ~58%。A10G 没有 NVLink，TP 通信走 PCIe——这正是<b>为什么生产 MoE 想要 NVLink/H200</b> 的直观原因。<a href="index.html">→ 真实数据流页面</a>有逐卡权重分布和 DCGM 利用率读数。
+    </div>
+
+    <h3 style="font-family:var(--sans);font-weight:800;font-size:18px;margin:30px 0 4px">怎么选？官方指导归纳成两个问题</h3>
+    <p class="seclead">SGLang 官方文档与大规模 EP 博客的建议，归结为先问两件事：<b>① 模型的注意力是不是 MLA？② 你的负载是低并发求延迟、还是高并发求吞吐？</b></p>
+
+    <div class="card cy">
+      <h3>问题一：是不是 MLA 模型？——决定 attention 走 TP 还是 DP</h3>
+
+      <p><b>先理清一件最容易绕晕的事：TP 和 DP 切的根本不是同一个东西。</b>多卡并行能分两种"活"——<b>① 一个请求内部的计算</b>，<b>② 一批不同的请求</b>。<b>TP 切①，DP 切②。</b></p>
+
+      <div class="cutfig">
+        <div class="cut tp" style="--c:var(--amber)">
+          <div class="ch">TP「按 head 切」</div>
+          <div class="csub">多张卡合力算 · 同 · 一 · 个请求</div>
+          <div class="creq">把<b>请求 A 这一层的计算</b>横向拆开摊给 4 卡：</div>
+          <div class="cutcards">
+            <div class="cutgpu"><span class="cg">卡0</span><span class="cwork"><span class="cwk part">A·head1-4</span></span></div>
+            <div class="cutgpu"><span class="cg">卡1</span><span class="cwork"><span class="cwk part">A·head5-8</span></span></div>
+            <div class="cutgpu"><span class="cg">卡2</span><span class="cwork"><span class="cwk part">A·head9-12</span></span></div>
+            <div class="cutgpu"><span class="cg">卡3</span><span class="cwork"><span class="cwk part">A·head13-16</span></span></div>
+          </div>
+          <div class="ccomm">4 卡只算出 A 的碎片，每层要 <b>all-reduce</b> 拼回 → <b>卡间频繁通信</b>。单请求延迟低，但 MLA 只有 1 个 head，<b>这种拆法拆不动</b>。</div>
+          <div class="commfig">每层 all-reduce 通信次数：<b id="comm-tp">0</b></div>
+        </div>
+        <div class="cut dpa" style="--c:var(--phos)">
+          <div class="ch">DPA「按请求切」</div>
+          <div class="csub">一张卡独 · 包 · 几个完整请求</div>
+          <div class="creq">不拆单个请求，<b>整个请求塞给一张卡</b>，不同请求去不同卡：</div>
+          <div class="cutcards">
+            <div class="cutgpu"><span class="cg">卡0</span><span class="cwork"><span class="cwk full">请求A</span><span class="cwk full">请求B</span></span></div>
+            <div class="cutgpu"><span class="cg">卡1</span><span class="cwork"><span class="cwk full">请求C</span><span class="cwk full">请求D</span></span></div>
+            <div class="cutgpu"><span class="cg">卡2</span><span class="cwork"><span class="cwk full">请求E</span><span class="cwk full">请求F</span></span></div>
+            <div class="cutgpu"><span class="cg">卡3</span><span class="cwork"><span class="cwk full">请求G</span><span class="cwk full">请求H</span></span></div>
+          </div>
+          <div class="ccomm">每卡独立算完自己那几个请求，各存各的 KV。请求间天生独立 → <b>不用 all-reduce、不复制 KV</b>。高并发吞吐高。</div>
+          <div class="commfig">attention 卡间通信次数：<b id="comm-dpa">0</b>（恒为零）</div>
+        </div>
+      </div>
+
+      <details class="fold">
+      <summary>一个餐厅的比喻（展开）</summary>
+      <div class="callout" style="border-left-color:var(--amber);margin-top:0">
+        来了 8 桌客人要出菜。<b>TP（按 head 切）= 一道菜由多个厨师流水线协作</b>：切配、爆炒、摆盘各管一段，做一道菜要不停传递（=通信），单道菜出得快。<b>DPA（按请求切）= 一个厨师全包几桌</b>：1 号厨师独立做完第 1、2 桌的所有菜，2 号包第 3、4 桌……厨师互不打扰（=不通信）、各管各的食材（=各存各的 KV），8 人火力全开总出菜量大。<b>"按请求切"就是后者：不拆单个请求的活，而是把整桌整桌的请求分给不同的卡。</b>
+      </div>
+      </details>
+
+      <p style="margin-top:16px">理解了"切的是不同东西"，再看 <b>KV cache 在两种切法下分别怎么放</b>。每个 token 会缓存 <b>K/V 向量</b>，注意力是<b>多头</b>的、<b>每头一套独立 K/V</b>——所以 KV cache 像<b>一排抽屉，一个头一个抽屉</b>，"<b>KV head 数</b>"就是抽屉数。<b>TP 省显存正是按抽屉（head）分卡：</b></p>
+
+      <div class="drawerfig">
+        <div class="dpanel" style="--c:var(--cyan)">
+          <div class="dh">① 普通模型（MHA/GQA）<br>抽屉多 → TP 切得动 ✓</div>
+          <div class="dsub">按 head 把抽屉分给各卡</div>
+          <div class="dwgpu"><span class="gl">卡0</span><span class="dwboxes"><span class="kv head">头1</span><span class="kv head">头2</span></span></div>
+          <div class="dwgpu"><span class="gl">卡1</span><span class="dwboxes"><span class="kv head">头3</span><span class="kv head">头4</span></span></div>
+          <div class="dwgpu"><span class="gl">…</span><span class="dwboxes"><span class="kv head">头…</span></span></div>
+          <div class="dconc">各卡只存自己那几个抽屉，<b>KV 显存真正 ÷N</b>。</div>
+        </div>
+        <div class="dpanel" style="--c:var(--red)">
+          <div class="dh">② MLA + TP<br>只有 1 个抽屉 → 切不动 ✗</div>
+          <div class="dsub">MLA 把所有头压成 1 份共享 KV</div>
+          <div class="dwgpu"><span class="gl">卡0</span><span class="dwboxes"><span class="kv dup">整份KV</span></span></div>
+          <div class="dwgpu"><span class="gl">卡1</span><span class="dwboxes"><span class="kv dup">整份KV</span></span></div>
+          <div class="dwgpu"><span class="gl">…</span><span class="dwboxes"><span class="kv dup">整份KV</span></span></div>
+          <div class="dconc">1 个抽屉分不给 8 卡，<b>只能每卡复制一整份</b>——非但没省，占了 N 份 KV。</div>
+        </div>
+        <div class="dpanel" style="--c:var(--phos)">
+          <div class="dh">③ MLA + DPA<br>换方向：按请求切 ✓</div>
+          <div class="dsub">不按抽屉，按"请求"分卡</div>
+          <div class="dwgpu"><span class="gl">卡0</span><span class="dwboxes"><span class="kv req">请求A</span><span class="kv req">请求B</span></span></div>
+          <div class="dwgpu"><span class="gl">卡1</span><span class="dwboxes"><span class="kv req">请求C</span><span class="kv req">请求D</span></span></div>
+          <div class="dwgpu"><span class="gl">…</span><span class="dwboxes"><span class="kv req">…</span></span></div>
+          <div class="dconc">各卡专管不同请求、各存各的 KV，<b>互不复制</b>。不同请求注意力本就独立，天然不用卡间通信。</div>
+        </div>
+      </div>
+
+      <p><b>一句话：</b>TP 想<b>按 head 切</b> KV，可 <b>MLA（DeepSeek V2/V3/R1）只有 1 个 KV head</b>，切不动、只能复制，显存全浪费。SGLang 的 <b>DP Attention（DPA）</b> 改成<b>按请求切</b>，绕开这个问题——用 <code>--enable-dp-attention</code> 开启（要求 <code>--dp-size &gt; 1</code> 且 <code>tp_size % dp_size == 0</code>）。</p>
+      <p style="color:var(--dim)"><b>MLA 的标配是 DPA</b>；普通 <b>GQA</b>（Llama / Qwen）抽屉够分，常规 TP 就行。所以"MoE + MLA" 的典型配置 = <b>attention 走 DPA、专家走 EP</b>，即 DeepSeek 官方推荐的 <code>--tp 8 --dp-size 8 --ep 8 --enable-dp-attention</code>。</p>
+
+      <div class="callout" style="border-left-color:var(--pink)">
+        <span class="ct" style="color:var(--pink)">别被名字带偏：DPA ≠ 上面卡片里的 DP（数据并行）</span>
+        两者都叫 "DP"，但<b>复制的范围完全不同</b>：<br>
+        · <b>DP（数据并行）</b>：<b>整个模型</b>复制 N 份，每份都有完整参数，各自是独立引擎，靠 Router 在<b>引擎之间</b>分流请求。显存代价 = N 份完整模型。<br>
+        · <b>DPA（DP Attention）</b>：发生在<b>一组卡（一个 TP 组）内部</b>，且<b>只针对 attention 这一段</b>——这组卡上其余部分（MoE 专家走 EP、embedding/LM head 走 TP）依然是<b>切开的</b>，谁也没有完整模型。之所以带 "DP" 三个字母，只是因为它对 attention 用了"按请求分工"这个数据并行的<b>思想</b>：既然 MLA 的 KV 没有 head 维度可切，那干脆每张卡独立算自己那几个请求的注意力、各存各的 KV。<br>
+        判断口诀：<b>DP 复制的是"整个模型"，DPA 复制的只是"attention 权重"</b>（每卡一份 attention 权重 + 各自请求的 KV），模型主体（占大头的专家）仍然是切分的。所以 <code>--dp-size 8</code> 配合 <code>--enable-dp-attention</code> 时并不会把显存变成 8 份模型——它只是 attention 的切法说明。
+      </div>
+
+      <details class="fold">
+      <summary>等等——既然 attention 按请求切，为啥还写 --tp 8？（展开）</summary>
+      <div class="callout" style="border-left-color:var(--amber);margin-top:0">
+        因为 <code>--tp 8 --dp-size 8 --ep 8</code> <b>不是 8×8×8 张卡，而是同一组 8 张卡的三种"切法说明"</b>。<code>--tp 8</code> 主要声明<b>总共 8 张卡</b>（池子大小），<code>--dp-size</code> 和 <code>--ep</code> 再分别规定模型的不同部分在这 8 卡上怎么并行：<br>
+        · <b>attention 层</b> → 看 <code>dp-size</code>：<code>tp=dp=8</code> 时 attention <b>纯按请求切（零 head 切分）</b>；若 <code>dp=4</code> 则组间按请求、组内 2 卡再按 head 切（混合）。所以<b>真正决定 attention 切法的是 <code>dp-size</code>，不是 <code>tp</code></b>。约束 <code>tp_size % dp_size == 0</code> 说的就是"同一个池子怎么再分组"。<br>
+        · <b>MoE 专家层</b> → 看 <code>ep</code>：按专家切。<br>
+        · <b>其余部分</b>（embedding、LM head、前几层稠密 FFN）→ 仍按常规 TP 按权重切——这才是 <code>tp</code> 还要写满 8 的原因。<br>
+        一句话：<b><code>tp</code> = 用几张卡；<code>dp-size</code> = attention 怎么切；<code>ep</code> = 专家怎么切。三者共享同一组卡，各管一部分。</b>
+      </div>
+      </details>
+    </div>
+
+    <div class="card am">
+      <h3>问题二：低并发还是高并发？——决定 attention 走 TP 还是 DP（性能交叉点）</h3>
+      <p><b>低并发 / 求低延迟（交互聊天）→ TP + EP</b>：单个请求被切到多卡并行算，单请求延迟最低。<br>
+      <b>高并发 / 求高吞吐（批处理、API）→ DP + EP</b>：多副本各扛一批，吞吐近线性扩展。<br>
+      这俩存在一个<b>性能交叉点</b>：并发低时 TP 赢，并发高时 DP 赢——务必在<b>你自己的真实负载</b>上测，别只看合成 benchmark。</p>
+    </div>
+
+    <table class="spec" id="paralleltable"></table>
+
+    <div class="callout" style="border-left-color:var(--phos)">
+      <span class="ct" style="color:var(--phos)">EP 开了之后还要管两件事</span>
+      <b>① 通信重叠</b>：EP 的 all-to-all 很贵，开 <b>TBO</b>（<code>--enable-two-batch-overlap</code>）把它藏进另一批计算，最多再 ~2×。<b>② 负载均衡</b>：专家路由天然不均，开 <b>EPLB</b>（<code>--enable-eplb</code>）按激活统计重排/复制专家，削峰填谷。纯 <b>Dense 模型没有专家，EP 不适用</b>，只在 TP / DP 之间选。
+    </div>
+  </section>
+
+  <!-- ===== 6. 请求生命周期 ===== -->
+  <section id="sec-life">
+    <div class="sectit"><span class="no">06</span>串起来：一个请求的一生 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">把前面五节连起来，一个 HTTP 请求进 SGLang 后大致是这样流动的——按 ▶ 让发光的"请求粒子"走一遍，或用 ≪ ≫ 逐站步进：</p>
+    <div class="lifefig" id="lifefig">
+      <div class="lifeflow" id="lifeflow"></div>
+    </div>
+    <div class="callout" style="border-left-color:var(--phos)">
+      <span class="ct" style="color:var(--phos)">前端语言：SGLang 不只是后端</span>
+      SGLang 还提供一套 Python 前端（<code>@sgl.function</code>），写多步、带分支/并行的 LLM 程序。它的妙处是<b>前后端协同</b>：你用 <code>if/fork</code> 写出来的分支，天然共享前缀，后端的 RadixAttention 自动复用那段 KV——<b>你写逻辑，引擎管缓存</b>。另外结构化输出（JSON/正则/语法约束）由 <b>XGrammar</b> 在解码时逐 token 约束，比通用 guided decoding 快数倍。
+    </div>
+  </section>
+
+  <!-- ===== 7. 速查表 ===== -->
+  <section>
+    <div class="sectit"><span class="no">07</span>核心特性速查</div>
+    <p class="seclead">前六节的特性一张表收拢——<b>它对应到具体启动参数，看下一节</b>。</p>
+    <table class="spec" id="spec"></table>
+  </section>
+
+  <!-- ===== 8. 启动参数 ===== -->
+  <section>
+    <div class="sectit"><span class="no">08</span>常用启动参数</div>
+    <p class="seclead">SGLang 用 <code>python -m sglang.launch_server</code> 起服务，行为几乎全靠命令行参数控制。先看一条<b>真实的 MoE 启动命令逐行注解</b>（就是本项目 DeepSeek 实测用的那类配置），再按用途分组速查。<b>每行右侧的注解说明它管什么，▸ 徽标可点回对应章节。</b></p>
+
+    <div class="launch">
+      <div class="lc-head">一条典型的多卡 MoE 启动命令</div>
+      <div class="lcmd" id="lcmd"></div>
+    </div>
+
+    <div id="arggroups"></div>
+
+    <div class="callout">
+      <span class="ct">怎么读这些参数</span>
+      绝大多数性能特性（overlap 调度、RadixAttention、CUDA graph、continuous batching）<b>默认就开</b>，不用写——这也是 SGLang "开箱即快" 的原因。你真正要手调的，主要是<b>并行度（tp/ep）、显存水位（mem-fraction-static）、CUDA graph 批量上限</b>这几个。完整列表见官方 <a href="https://docs.sglang.ai/backend/server_arguments.html" target="_blank" rel="noopener">Server Arguments</a> 文档（参数随版本变化，以文档为准）。
+    </div>
+  </section>
+
+  <!-- ===== 总结 ===== -->
+  <section>
+    <div class="takeaway">
+      <p>SGLang 的本质 = <em>把 CPU 侧的浪费榨干</em>。<br>
+      <em>RadixAttention</em> 不重算共享前缀、<em>零开销调度器</em> 不让 CPU 拖住 GPU、<em>continuous batching</em> 让 GPU 一刻不空——再叠上 TP/EP/PD 把大模型铺开、把通信藏进计算。模型决定算什么，<em>SGLang 决定怎么把它喂满、喂快</em>。</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>SGLang 引擎页 · 内容整理自我的 Obsidian 学习笔记（<b>Continuous batching</b>、<b>CUDA graph 是什么</b>、<b>PD 分离架构</b>、<b>在 EKS 上部署 SGLang + DeepSeek-V3</b>、<b>为啥 LLM 推理需要高带宽</b>）与 SGLang 官方资料。
+    交互动画为原创示意，时间线与命中率为说明性数值（非真实 benchmark）。延伸阅读：<a href="https://lmsys.org/blog/2024-12-04-sglang-v0-4/" target="_blank" rel="noopener">SGLang v0.4 博客</a>、<a href="https://docs.sglang.ai/" target="_blank" rel="noopener">SGLang 文档</a>。</p>
+  </footer>
+
+</div>
+
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/ScrollTrigger.min.js"></script>
+<script src="vendor/MotionPathPlugin.min.js"></script>
+<script src="gx.js"></script>
+<script>
+// ---------- 1. 流水线 ----------
+const FLOW=[
+  {n:'①',t:'用户请求',d:'HTTP / OpenAI 兼容 API 进来',c:'var(--dim)'},
+  {n:'②',t:'Tokenizer',d:'文本 → token id 序列',c:'var(--cyan)'},
+  {n:'③',t:'SGLang 调度层',d:'Radix 匹配 + 组 batch + 显存',c:'var(--phos)'},
+  {n:'④',t:'GPU forward',d:'模型算 Prefill / Decode',c:'var(--amber)'},
+  {n:'⑤',t:'Detokenize',d:'token → 文本，流式吐回',c:'var(--violet)'},
+];
+(function(){
+  const box=document.getElementById('flow');
+  FLOW.forEach((s,i)=>{
+    const d=document.createElement('div');d.className='fstep';d.style.setProperty('--c',s.c);
+    d.innerHTML=`<div class="fn">${s.n}</div><div class="ft">${s.t}</div><div class="fd">${s.d}</div>`;
+    box.appendChild(d);
+    if(i<FLOW.length-1){
+      const a=document.createElement('div');a.className='farrow';a.textContent='→';box.appendChild(a);
+      const v=document.createElement('div');v.className='fdown';v.textContent='↓';box.appendChild(v);
+    }
+  });
+})();
+
+// ---------- 2. RadixAttention demo：真正的树 + 生长动画 ----------
+// 4 个请求，逐"段"共享前缀（每段是若干 token 的语义块）
+const SYS = {seg:'你是一个助手。', tok:6};
+const REQS=[
+  {id:'A', label:'A · "…今天天气如何"',      segs:[SYS, {seg:'今天天气如何？', tok:7}]},
+  {id:'B', label:'B · "…帮我写首诗"',         segs:[SYS, {seg:'帮我写首诗。', tok:6}]},
+  {id:'C', label:'C · "…帮我写首诗，关于秋天"', segs:[SYS, {seg:'帮我写首诗。', tok:6}, {seg:'关于秋天。', tok:5}]},
+  {id:'D', label:'D · 换了 system prompt',    segs:[{seg:'You are helpful.', tok:5}, {seg:'帮我写首诗。', tok:6}]},
+];
+(function(){
+  const bar=document.getElementById('reqbar');
+  const treeEl=document.getElementById('tree');
+  const demo=document.getElementById('radixdemo');
+  const rsText=document.getElementById('rs-text');
+  const rsHit=document.getElementById('rs-hit'), rsFresh=document.getElementById('rs-fresh');
+  const rsPct=document.getElementById('rs-pct'), rsHitn=document.getElementById('rs-hitn'), rsFreshn=document.getElementById('rs-freshn');
+  let hitTok=0, freshTok=0, busy=false;
+  const sent=new Set();
+
+  // 根节点（DOM 常驻，之后只 append，不整体重绘）
+  const root={seg:'(root)', tok:0, children:[], el:null, box:null};
+  const rd=document.createElement('div'); rd.className='tn root';
+  rd.innerHTML='<div class="tnbox"><span class="seg">radix tree · 根</span></div>';
+  treeEl.appendChild(rd); root.el=rd; root.box=rd.firstChild;
+  const empty=document.createElement('div');
+  empty.style.cssText='color:var(--dim);font-size:11.5px;margin:8px 0 0 34px';
+  empty.textContent='（树还是空的 —— 发送 A 开始生长）';
+  treeEl.appendChild(empty);
+
+  function makeNode(seg,tok){
+    const d=document.createElement('div'); d.className='tn fresh';
+    const b=document.createElement('div'); b.className='tnbox';
+    b.innerHTML=`<span class="seg">${seg}</span><span class="tok">${tok} tok</span>`;
+    d.appendChild(b);
+    return {seg,tok,children:[],el:d,box:b};
+  }
+
+  function floatText(refBox,txt,color){
+    if(GX.reduced()) return;
+    const s=document.createElement('span'); s.className='tnfloat';
+    s.textContent=txt; s.style.color=color;
+    const c=GX.center(refBox,demo);
+    s.style.left=(c.x+34)+'px'; s.style.top=(c.y-12)+'px';
+    demo.appendChild(s);
+    gsap.fromTo(s,{opacity:0,y:8},{opacity:1,y:-14,duration:.7,ease:'power2.out',
+      onComplete:()=>gsap.to(s,{opacity:0,duration:.35,onComplete:()=>s.remove()})});
+  }
+
+  function updateStats(msg){
+    const total=hitTok+freshTok, pct=total?Math.round(hitTok/total*100):0;
+    GX.roll(rsPct,pct); GX.roll(rsHitn,hitTok); GX.roll(rsFreshn,freshTok);
+    rsHit.style.width=(total?hitTok/total*100:0)+'%';
+    rsFresh.style.width=(total?freshTok/total*100:0)+'%';
+    if(msg) rsText.innerHTML=msg;
+  }
+
+  // FLIP：布局变化前记录 rect，插入后 gsap.from 差值
+  function collectBoxes(node,out){ out.push(node.box); node.children.forEach(c=>collectBoxes(c,out)); }
+  function withFLIP(mutate){
+    const boxes=[]; collectBoxes(root,boxes);
+    const before=new Map(boxes.map(b=>[b,b.getBoundingClientRect()]));
+    mutate();
+    if(GX.reduced()) return;
+    boxes.forEach(b=>{
+      const a=before.get(b), n=b.getBoundingClientRect();
+      const dx=a.left-n.left, dy=a.top-n.top;
+      if(dx||dy) gsap.from(b,{x:dx,y:dy,duration:.4,ease:'power2.out',clearProps:'transform'});
+    });
+  }
+
+  // 发送一个请求：返回 GSAP timeline
+  function send(rid,chip){
+    const r=REQS.find(x=>x.id===rid);
+    // 预判是否"重发"（整条路径已在树上）——重发只演示全绿命中，不动统计
+    let probe=root, resend=true;
+    for(const s of r.segs){
+      probe=probe.children.find(c=>c.seg===s.seg);
+      if(!probe){ resend=false; break; }
+    }
+    const tl=gsap.timeline();
+    // ① 请求小方块从 chip 飞向树根
+    if(chip && !GX.reduced()){
+      const svg=GX.overlay(demo);
+      const a=GX.center(chip,demo), b=GX.center(root.box,demo);
+      const p=GX.svgEl('path',{d:GX.arc(a,b,.22),fill:'none'},svg);
+      const dot=GX.svgEl('rect',{x:-6,y:-6,width:12,height:12,rx:3,opacity:0},svg);
+      dot.style.fill='#39d0ff';
+      tl.set(dot,{opacity:1,x:a.x,y:a.y})
+        .to(dot,{motionPath:{path:p,align:p,alignOrigin:[.5,.5]},duration:.55,ease:'power2.inOut'})
+        .to(dot,{opacity:0,duration:.15,onComplete:()=>{p.remove();dot.remove();}});
+    }
+    // ② 沿命中路径逐节点下行；③ 分叉处长出新节点
+    let parent=root;
+    r.segs.forEach((s,i)=>{
+      const at=(i===0?'+=0':'+=0.12');
+      let node=parent.children.find(c=>c.seg===s.seg);
+      if(node){ // 命中：绿色波次
+        const n=node;
+        tl.call(()=>{
+          n.el.classList.remove('fresh'); n.el.classList.add('cached');
+          GX.flash(n.box);
+          if(!resend){ hitTok+=s.tok; updateStats(); }
+          floatText(n.box,'命中 +'+s.tok+' tok','var(--phos)');
+        },null,at);
+      }else{ // miss：新节点从 0 宽长出（可能是分叉/分裂点）
+        const p=parent;
+        const created=makeNode(s.seg,s.tok);
+        tl.call(()=>{
+          if(empty.parentNode) empty.remove();
+          withFLIP(()=>{ p.el.appendChild(created.el); p.children.push(created); });
+          freshTok+=s.tok; updateStats();
+          if(!GX.reduced()){
+            gsap.from(created.box,{scaleX:0,opacity:0,duration:.5,ease:'back.out(1.7)',clearProps:'transform,opacity'});
+          }
+          floatText(created.box,'新算 '+s.tok+' tok','var(--amber)');
+        },null,at);
+        node=created;
+      }
+      parent=node;
+    });
+    tl.call(()=>{
+      sent.add(rid);
+      if(chip) chip.setAttribute('aria-pressed','true');
+      if(resend){
+        updateStats(`<b>重发 ${rid}</b>：整条路径都在树上，<b style="color:var(--phos)">100% 命中</b>——一个 token 的 prefill 都不用跑，这就是多轮对话/重试便宜的原因。`);
+      }else if(rid==='D'){
+        updateStats('注意 <b>D 换了 system prompt</b>，开头第一个 token 就对不上，只能从根<b>另起一条分支</b>，几乎全部新算——这就是"前缀顺序不一致 → 命中率塌方"。');
+      }else{
+        updateStats(`<b>${rid}</b> 沿树往下匹配：绿色节点直接复用 KV，黄色尾巴才去跑 prefill。`);
+      }
+    },null,'+=0.05');
+    return tl;
+  }
+
+  // 请求 chips（button + aria-pressed；重发=再点一次）
+  const chips={};
+  REQS.forEach(r=>{
+    const c=document.createElement('button');
+    c.type='button'; c.className='reqchip'; c.dataset.id=r.id;
+    c.setAttribute('aria-pressed','false');
+    c.innerHTML=`<b>发送</b> ${r.label}`;
+    c.addEventListener('click',()=>{
+      if(busy) return; busy=true;
+      const tl=send(r.id,c);
+      tl.eventCallback('onComplete',()=>{ busy=false; c.innerHTML=`<b>重发</b> ${r.label}`; });
+      if(GX.reduced()) { tl.progress(1,false); busy=false; } // false=不抑制事件，树的变化在 call 里
+    });
+    bar.appendChild(c); chips[r.id]=c;
+  });
+
+  // 自动演示按钮
+  const auto=document.createElement('button');
+  auto.type='button'; auto.className='reqchip'; auto.style.borderStyle='dashed';
+  auto.innerHTML='<b>▶</b> 自动演示 A→B→C→D';
+  auto.addEventListener('click',()=>{
+    if(busy) return; busy=true; auto.disabled=true;
+    let i=0;
+    (function step(){
+      if(i>=REQS.length){
+        busy=false; auto.disabled=false;
+        REQS.forEach(r=>{ chips[r.id].innerHTML=`<b>重发</b> ${r.label}`; });
+        return;
+      }
+      const r=REQS[i++];
+      // 每个请求的 timeline 必须等上一个播完才 build（树结构在播放中才变化）
+      const tl=send(r.id,chips[r.id]);
+      if(GX.reduced()){ tl.progress(1,false); step(); }
+      else tl.eventCallback('onComplete',()=>gsap.delayedCall(.45,step));
+    })();
+  });
+  bar.appendChild(auto);
+})();
+
+// ---------- 3. 调度器时间线：播放式对比（四条泳道 + 扫描播放头）----------
+(function(){
+  const STEPS=5, CPU=14, GPU=30;
+  const wrap=document.getElementById('schedwrap');
+  const tracks={
+    's-cpu':document.getElementById('track-s-cpu'),
+    's-gpu':document.getElementById('track-s-gpu'),
+    'o-cpu':document.getElementById('track-o-cpu'),
+    'o-gpu':document.getElementById('track-o-gpu'),
+  };
+  const axis=document.getElementById('schedaxis');
+  const note=document.getElementById('schednote');
+
+  function layout(mode){
+    const blks=[];
+    if(mode==='serial'){
+      let t=0;
+      for(let i=0;i<STEPS;i++){
+        blks.push({lane:'cpu',start:t,len:CPU,label:`调度${i+1}`}); t+=CPU;
+        blks.push({lane:'gpu',start:t,len:GPU,label:`fwd${i+1}`}); t+=GPU;
+      }
+      return {blks,total:t};
+    }
+    blks.push({lane:'cpu',start:0,len:CPU,label:'调度1'});
+    let g=CPU;
+    for(let i=0;i<STEPS;i++){
+      blks.push({lane:'gpu',start:g,len:GPU,label:`fwd${i+1}`});
+      if(i<STEPS-1) blks.push({lane:'cpu',start:g+2,len:CPU,label:`调度${i+2}`});
+      g+=GPU;
+    }
+    return {blks,total:g};
+  }
+  const S=layout('serial'), O=layout('overlap');
+  const TMAX=S.total; // 时间轴以最慢(串行)为准
+
+  // 块 DOM 一次创建，动画只改 scaleX（从左向右生长）
+  function build(def,prefix){
+    return def.blks.map(b=>{
+      const el=document.createElement('div');
+      el.className='blk '+b.lane;
+      el.style.left=(b.start/TMAX*100)+'%';
+      el.style.width=(b.len/TMAX*100-.4)+'%';
+      el.style.clipPath='inset(0 100% 0 0)';
+      el.textContent=b.label;
+      tracks[prefix+'-'+b.lane].appendChild(el);
+      return {b,el};
+    });
+  }
+  const sBlks=build(S,'s'), oBlks=build(O,'o');
+
+  // serial GPU 泳道的空隙(CPU 在忙、GPU idle)
+  const idles=[];
+  {
+    let t=0;
+    for(let i=0;i<STEPS;i++){
+      const tag=document.createElement('span');
+      tag.className='idletag'; tag.textContent='IDLE';
+      tag.style.left=((t+CPU/2)/TMAX*100)+'%';
+      tag.style.transform='translateX(-50%)';
+      tracks['s-gpu'].appendChild(tag);
+      idles.push({start:t,end:t+CPU,el:tag});
+      t+=CPU+GPU;
+    }
+  }
+
+  // 播放头（一根，跨两组）
+  const head=document.createElement('div'); head.className='playhead';
+  head.style.left='0%'; head.style.opacity='0';
+  wrap.appendChild(head);
+
+  const DUR=6; // 全程秒数
+  const tl=gsap.timeline({paused:true});
+  const state={t:0};
+  tl.set(head,{opacity:1},0);
+  tl.to(state,{t:TMAX,duration:DUR,ease:'none',onUpdate:apply},0);
+  tl.add('end');
+
+  function apply(){
+    const t=state.t;
+    // 播放头对齐到 track 的实际水平范围（label 列有缩进，坐标每帧现算，resize 安全）
+    const tr=tracks['s-cpu'].getBoundingClientRect(), wr=wrap.getBoundingClientRect();
+    head.style.left=(tr.left-wr.left + t/TMAX*tr.width)+'px';
+    const grow=({b,el})=>{
+      const k=Math.max(0,Math.min(1,(t-b.start)/b.len));
+      el.style.clipPath='inset(0 '+((1-k)*100)+'% 0 0)';
+    };
+    sBlks.forEach(grow); oBlks.forEach(grow);
+    idles.forEach(i=>{
+      const on=t>=i.start&&t<=i.end;
+      i.el.style.opacity=on?'1':(t>i.end?'.35':'0');
+    });
+    // 终点数字
+    if(t>=TMAX-.01&&!apply.done){
+      apply.done=true;
+      GX.roll(document.getElementById('res-serial'),S.total,{dur:.6});
+      GX.roll(document.getElementById('res-overlap'),O.total,{dur:.6});
+      GX.roll(document.getElementById('res-save'),S.total-O.total,{dur:.8});
+      note.innerHTML='<div class="nt">对比结果：重叠调度提前 '+(S.total-O.total)+' 单位完成</div>串行时 GPU 泳道每步前都有一段红色 <b>IDLE</b>——CPU 组 batch 时 GPU 干等。重叠调度里 CPU 用 <b>future token 占位</b>提前把第 i+1 步准备好，<b>GPU 泳道连成一片</b>，5 步 forward 从 '+S.total+' 单位缩到 '+O.total+' 单位。';
+    }
+    if(t<TMAX-.01) apply.done=false;
+  }
+  axis.textContent=`时间轴 0 → ${TMAX} 单位（${STEPS} 步 forward）· 串行 ${S.total} vs 重叠 ${O.total}`;
+  note.innerHTML='<div class="nt">按 ▶ 播放</div>同一根播放头同时扫两种模式：上组是<b>串行</b>（CPU 完了 GPU 才动），下组是 SGLang 的<b>重叠调度</b>。注意看串行 GPU 泳道被播放头扫过的<b>红色 IDLE 空隙</b>。';
+
+  const ctlHost=document.createElement('div');
+  document.getElementById('scheddemo').insertBefore(ctlHost,wrap);
+  GX.controls(ctlHost,tl);
+  GX.autoplayOnVisible(document.getElementById('scheddemo'),tl);
+})();
+
+// ---------- 4. Continuous batching：双泳道槽位动画 ----------
+(function(){
+  const stage=document.getElementById('cbstage');
+  const COLORS={A:'var(--cyan)',B:'var(--amber)',C:'var(--violet)',D:'var(--pink)',E:'var(--phos)',F:'#7ad7a8'};
+  // 各请求需要的 decode 时长（秒，示意）：D 最慢
+  const LEN={A:1.6,B:2.6,C:3.4,D:5,E:2.4,F:2.2};
+  const ORDER=['A','B','C','D'];
+
+  function mkSlots(host){
+    const slots=[];
+    for(let i=0;i<4;i++){
+      const s=document.createElement('div'); s.className='cbslot';
+      s.innerHTML=`<span class="sl">SLOT ${i}</span>`;
+      host.appendChild(s); slots.push(s);
+    }
+    return slots;
+  }
+  const sSlots=mkSlots(document.getElementById('cb-static-slots'));
+  const cSlots=mkSlots(document.getElementById('cb-cont-slots'));
+
+  function mkReq(id){
+    const d=document.createElement('div'); d.className='cbreq';
+    d.style.background=COLORS[id];
+    d.innerHTML=`<span>${id}</span><span class="rp"><i></i></span>`;
+    return d;
+  }
+  // 等待队列（E、F 排在后面）
+  const queueHost=document.getElementById('cb-queue');
+  const qEls={};
+  ['E','F'].forEach(id=>{
+    const q=document.createElement('span'); q.className='cbq';
+    q.style.background=COLORS[id]; q.textContent=id;
+    queueHost.appendChild(q); qEls[id]=q;
+  });
+
+  const utilEl=document.getElementById('cb-util'), utilSEl=document.getElementById('cb-util-s');
+  const doneS=document.getElementById('cb-done-s'), doneC=document.getElementById('cb-done-c');
+  const counters={s:0,c:0,idleS:0};
+  const setUtilS=()=>GX.roll(utilSEl,(4-counters.idleS)/4*100,{dur:.4,suffix:'%'});
+
+  // 请求块 DOM 一次创建，timeline 只改属性（可暂停/倍速/重播）
+  const reqs={s:{},c:{}};
+  ORDER.forEach((id,i)=>{
+    reqs.s[id]=mkReq(id); sSlots[i].appendChild(reqs.s[id]);
+    reqs.c[id]=mkReq(id); cSlots[i].appendChild(reqs.c[id]);
+    gsap.set([reqs.s[id],reqs.c[id]],{y:-38,opacity:0});
+  });
+  reqs.c.E=mkReq('E'); cSlots[0].appendChild(reqs.c.E);
+  reqs.c.F=mkReq('F'); cSlots[1].appendChild(reqs.c.F);
+  gsap.set([reqs.c.E,reqs.c.F],{x:-60,opacity:0});
+  const bar=(k,id)=>reqs[k][id].querySelector('.rp i');
+  const T0=.7; // 进度条起跑时刻
+
+  function buildTL(){
+    const tl=gsap.timeline({repeat:-1,repeatDelay:1.8,paused:true});
+    // 复位
+    tl.set(Object.values(reqs.s).concat([reqs.c.A,reqs.c.B,reqs.c.C,reqs.c.D]),{y:-38,x:0,opacity:0},0);
+    tl.set([reqs.c.E,reqs.c.F],{x:-60,opacity:0},0);
+    tl.set([bar('s','A'),bar('s','B'),bar('s','C'),bar('s','D'),
+            bar('c','A'),bar('c','B'),bar('c','C'),bar('c','D'),bar('c','E'),bar('c','F')],{width:'0%'},0);
+    tl.set([qEls.E,qEls.F],{opacity:1,scale:1},0);
+    tl.call(()=>{
+      sSlots.forEach(s=>s.classList.remove('idle'));
+      counters.s=0;counters.c=0;counters.idleS=0;
+      GX.roll(doneS,0,{dur:.2}); GX.roll(doneC,0,{dur:.2});
+      GX.roll(utilEl,100,{dur:.2,suffix:'%'}); GX.roll(utilSEl,100,{dur:.2,suffix:'%'});
+    },null,0);
+    // 入场：A-D 同时滑进两条泳道
+    ORDER.forEach((id,i)=>{
+      tl.to([reqs.s[id],reqs.c[id]],{y:0,opacity:1,duration:.4,ease:'back.out(1.4)'},.1+i*.08);
+    });
+    // 进度条：两条泳道同速跑
+    ORDER.forEach(id=>{
+      tl.to([bar('s',id),bar('c',id)],{width:'100%',duration:LEN[id],ease:'none'},T0);
+    });
+    // 静态泳道：完成后槽位打灰 idle、请求块变暗，利用率掉档
+    ORDER.forEach((id,i)=>{
+      tl.to(reqs.s[id],{opacity:.35,duration:.3},T0+LEN[id]);
+      if(id!=='D') tl.call(()=>{
+        sSlots[i].classList.add('idle');
+        counters.idleS=sSlots.filter(s=>s.classList.contains('idle')).length;
+        setUtilS();
+      },null,T0+LEN[id]);
+    });
+    // continuous：A 完成滑出 → E 立即补位；B 完成 → F 补位
+    const sub=[{out:'A',inn:'E'},{out:'B',inn:'F'}];
+    sub.forEach(({out,inn})=>{
+      const t=T0+LEN[out];
+      tl.call(()=>{ counters.c++; GX.roll(doneC,counters.c,{dur:.3}); },null,t);
+      tl.to(reqs.c[out],{x:60,opacity:0,duration:.35,ease:'power2.in'},t);
+      tl.to(qEls[inn],{opacity:0,scale:.6,duration:.3},t);
+      tl.to(reqs.c[inn],{x:0,opacity:1,duration:.4,ease:'back.out(1.3)'},t+.15);
+      tl.to(bar('c',inn),{width:'100%',duration:LEN[inn],ease:'none'},t+.25);
+      // E/F 完成滑出
+      const t2=t+.25+LEN[inn];
+      tl.call(()=>{ counters.c++; GX.roll(doneC,counters.c,{dur:.3}); },null,t2);
+      tl.to(reqs.c[inn],{x:60,opacity:0,duration:.35},t2);
+    });
+    // C、D 完成（continuous）
+    ['C','D'].forEach(id=>{
+      const t=T0+LEN[id];
+      tl.call(()=>{ counters.c++; GX.roll(doneC,counters.c,{dur:.3}); },null,t);
+      tl.to(reqs.c[id],{x:60,opacity:0,duration:.35},t);
+    });
+    // 静态：D 完成 → 整批一起清空、结算 4 个完成
+    const tEnd=T0+LEN.D+.15;
+    tl.call(()=>{
+      counters.s=4; GX.roll(doneS,4,{dur:.5});
+      counters.idleS=0; setUtilS();
+      sSlots.forEach(s=>s.classList.remove('idle'));
+    },null,tEnd);
+    tl.to(Object.values(reqs.s),{y:38,opacity:0,duration:.4,stagger:.06},tEnd);
+    tl.to({},{duration:.8},tEnd+.5);
+    return tl;
+  }
+  const tl=buildTL();
+  const ctl=document.createElement('div');
+  stage.appendChild(ctl);
+  GX.controls(ctl,tl);
+  GX.autoplayOnVisible(stage,tl);
+})();
+
+// ---------- 5. 并行选择决策表 ----------
+const PARALLEL=[
+  ['Dense 模型，单卡放得下','单卡；要扩吞吐就 DP 多副本'],
+  ['Dense 模型，单卡放不下','TP（走 NVLink），EP 不适用'],
+  ['MoE 模型，普通 GQA 注意力','TP（attention）+ EP（专家）'],
+  ['MoE + MLA（DeepSeek 系），低并发求延迟','DPA + EP（--enable-dp-attention --ep N）'],
+  ['MoE + MLA，高并发求吞吐','DP + DPA + EP + SGLang Router（cache_aware）'],
+  ['大规模多机（如 96×H100）','PD 分离 + 大规模 EP + DPA + TBO + EPLB'],
+];
+document.getElementById('paralleltable').innerHTML=
+  '<tr><th>你的情况</th><th>推荐并行组合</th></tr>'+
+  PARALLEL.map(r=>`<tr><td>${r[0]}</td><td class="v">${r[1]}</td></tr>`).join('');
+
+// ---------- 5b. 通信代价微动画（TP all-reduce 脉冲 vs DPA 静默）----------
+(function(){
+  const tp=document.querySelector('.cut.tp'), dpa=document.querySelector('.cut.dpa');
+  if(!tp||!dpa) return;
+  const tpGpus=[...tp.querySelectorAll('.cutgpu')];
+  const dpaGpus=[...dpa.querySelectorAll('.cutgpu')];
+  const commTp=document.getElementById('comm-tp');
+  let comm=0;
+
+  function buildTL(){
+    const tl=gsap.timeline({repeat:-1,repeatDelay:.9,paused:true});
+    tl.call(()=>{ comm=0; GX.roll(commTp,0,{dur:.2}); });
+    // 每"层"：4 卡各算一拍，然后互射 all-reduce 光线
+    for(let layer=0;layer<2;layer++){
+      tl.to(tpGpus,{borderColor:'rgba(255,177,61,.85)',duration:.25,stagger:.05},'+=.2')
+        .to(tpGpus,{borderColor:'#1a2522',duration:.25},'+=.15');
+      tl.call(()=>{
+        if(GX.reduced()) return;
+        const svg=GX.overlay(tp);
+        for(let i=0;i<tpGpus.length;i++)for(let j=0;j<tpGpus.length;j++){
+          if(i===j) continue;
+          const a=GX.center(tpGpus[i],tp), b=GX.center(tpGpus[j],tp);
+          const ln=GX.svgEl('line',{x1:a.x,y1:a.y,x2:a.x,y2:a.y,'stroke-width':1.5,opacity:.8},svg);
+          ln.style.stroke='#ff5d5d';
+          gsap.to(ln,{attr:{x2:b.x,y2:b.y},duration:.3,ease:'power2.out',
+            onComplete:()=>gsap.to(ln,{opacity:0,duration:.25,onComplete:()=>ln.remove()})});
+          comm++;
+        }
+        GX.roll(commTp,comm,{dur:.5});
+      },null,'+=.05');
+      tl.to({},{duration:.6});
+    }
+    return tl;
+  }
+  const tl=buildTL();
+  GX.autoplayOnVisible(tp,tl);
+
+  // DPA 侧：各卡独立呼吸（无通信）
+  if(!GX.reduced()){
+    gsap.to(dpaGpus,{borderColor:'rgba(61,255,154,.45)',duration:1.2,
+      yoyo:true,repeat:-1,stagger:.3,ease:'sine.inOut'});
+  }
+
+  // TBO 卡：两条计算/通信条带交叠循环
+  const laneA=document.getElementById('tbo-a'), laneB=document.getElementById('tbo-b');
+  if(laneA&&laneB){
+    const mk=(host,phase)=>{
+      const cells=[];
+      for(let i=0;i<8;i++){
+        const c=document.createElement('i');
+        c.className=((i+phase)%2===0)?'tc':'tm';
+        host.appendChild(c); cells.push(c);
+      }
+      return cells;
+    };
+    const ca=mk(laneA,0), cb=mk(laneB,1);
+    if(!GX.reduced()){
+      gsap.fromTo(ca.concat(cb),{opacity:.35},{opacity:1,duration:.5,stagger:{each:.14,repeat:-1,yoyo:true},ease:'sine.inOut'});
+    }
+  }
+})();
+
+// ---------- 6. 请求的一生：贯穿动画 ----------
+(function(){
+  const STATIONS=[
+    {n:'①',t:'进队列',c:'var(--dim)',d:'tokenizer 把 prompt 切成 token id，排进等待队列。'},
+    {n:'②',t:'Radix 匹配',c:'var(--phos)',d:'在树上找最长命中前缀，命中部分 KV 直接复用（§02）。'},
+    {n:'③',t:'调度',c:'var(--amber)',d:'overlap scheduler 拼进下一个 batch，分配 KV 显存页（§03）。'},
+    {n:'④',t:'Prefill',c:'var(--cyan)',d:'只算未命中尾巴的 KV，灌进缓存（必要时 chunked）。'},
+    {n:'⑤',t:'Decode 循环',c:'var(--violet)',d:'进 running batch，每步吐一个 token，KV 增量增长（§04）。'},
+    {n:'⑥',t:'结束 / 留树',c:'var(--pink)',d:'命中 EOS，移出 batch、释放槽位；前缀留在 radix tree 给后人复用。'},
+  ];
+  const fig=document.getElementById('lifefig');
+  const flow=document.getElementById('lifeflow');
+  const steps=STATIONS.map((s,i)=>{
+    const d=document.createElement('div'); d.className='lstep'; d.style.setProperty('--c',s.c);
+    d.innerHTML=`<div class="fn">${s.n}</div><div class="ft">${s.t}</div><div class="fd">${s.d}</div>`;
+    flow.appendChild(d);
+    if(i<STATIONS.length-1){const a=document.createElement('div');a.className='farrow';a.textContent='→';flow.appendChild(a);
+      const v=document.createElement('div');v.className='fdown';v.textContent='↓';flow.appendChild(v);}
+    return d;
+  });
+
+  const svg=GX.overlay(fig);
+  const particle=GX.svgEl('circle',{r:6,opacity:0},svg);
+  particle.style.fill='#3dff9a';
+  particle.style.filter='drop-shadow(0 0 8px #3dff9a)';
+
+  function centers(){ return steps.map(s=>GX.center(s,fig)); } // 播放时现算，resize 安全
+
+  // timeline 本体只是"时间标尺"，站点高亮/粒子由 onUpdate 同步驱动 —— 步进/拖动都正确
+  const tl=gsap.timeline({paused:true});
+  const starts=[];
+  STATIONS.forEach((s,i)=>{
+    starts.push(tl.duration());
+    tl.addLabel('st'+i);
+    tl.to({},{duration:i===4?2.4:(i===5?1.6:1.0)});
+  });
+
+  let cur=-1;
+  function enter(i){
+    const cs=centers();
+    steps.forEach((el,j)=>el.classList.toggle('lit',j===i));
+    gsap.killTweensOf(particle);
+    gsap.set(particle,{opacity:1});
+    gsap.to(particle,{attr:{cx:cs[i].x,cy:cs[i].y},duration:.45,ease:'power2.inOut',onComplete:()=>{
+      if(i===4&&!GX.reduced()) orbit(cs[4]);
+    }});
+    if(i===5&&!GX.reduced()){ // 结束站：前缀块分离，飞向 §02 方向（左上）
+      const c=cs[5];
+      gsap.delayedCall(.55,()=>{
+        const pre=GX.svgEl('rect',{x:c.x-8,y:c.y-8,width:16,height:10,rx:3,opacity:.9},svg);
+        pre.style.fill='#3dff9a';
+        gsap.to(pre,{x:-(c.x*.7),y:-(c.y+140),opacity:0,duration:1.1,ease:'power2.in',onComplete:()=>pre.remove()});
+        GX.flash(steps[5]);
+      });
+    }
+  }
+  function orbit(c){ // Decode 站：粒子绕圈 + 吐 token 小点
+    gsap.to({p:0},{p:1,duration:1.7,ease:'none',
+      onUpdate:function(){
+        const a=this.targets()[0].p*Math.PI*4;
+        particle.setAttribute('cx',c.x+16*Math.cos(a));
+        particle.setAttribute('cy',c.y+16*Math.sin(a));
+      }});
+    [0,1,2,3].forEach(k=>{
+      gsap.delayedCall(.2+k*.35,()=>{
+        const d=GX.svgEl('circle',{cx:c.x,cy:c.y,r:3},svg);
+        d.style.fill='#b78cff';
+        gsap.to(d,{attr:{cx:c.x+30+k*14,cy:c.y+26},opacity:0,duration:.9,ease:'power1.out',onComplete:()=>d.remove()});
+      });
+    });
+  }
+  function sync(t){
+    const time=t.time();
+    if(time===0&&t.paused()) return; // 未开播不点亮
+    let i=0;
+    for(let k=0;k<starts.length;k++) if(time>=starts[k]-.001) i=k;
+    if(t.progress()>=1){ gsap.to(particle,{opacity:0,duration:.4}); steps.forEach(el=>el.classList.remove('lit')); cur=-1; return; }
+    if(i!==cur){ cur=i; enter(i); }
+  }
+
+  const ctl=document.createElement('div');
+  fig.appendChild(ctl);
+  GX.controls(ctl,tl,{labels:true});
+  // 用 ticker 轮询驱动 sync：播放、≪/≫ 步进（seek 不触发 onUpdate）都能正确点亮站点
+  let lastT=-1;
+  gsap.ticker.add(()=>{ const t=tl.time(); if(t!==lastT){ lastT=t; sync(tl); } });
+  GX.autoplayOnVisible(fig,tl);
+})();
+
+// ---------- 7. 核心特性速查（纯概念，参数挪到 §08）----------
+const SPEC=[
+  ['RadixAttention','前缀复用','radix tree 自动缓存/复用共享前缀的 KV，多轮对话/RAG/agent 提速明显（§02）'],
+  ['零开销调度器','CPU 不拖后腿','overlap scheduler 提前一步组 batch，藏住 CPU 开销（§03）'],
+  ['Continuous batching','吞吐','每个 token 后重组 running batch，GPU 满载、新请求零排队（§04）'],
+  ['Chunked prefill','延迟','把长 prefill 切片插进 decode，避免卡住别人的 decode（§04）'],
+  ['CUDA graph','launch 开销','录制 kernel 序列重放，砍掉逐 kernel 的 launch 开销（§03）'],
+  ['TP 张量并行','单层切分','权重切到多卡，每步 all-reduce，最好走 NVLink（§05）'],
+  ['EP 专家并行','MoE 切分','专家分散到多卡，token all-to-all 路由（§05）'],
+  ['PD 分离','Prefill/Decode 隔离','算力重的 prefill 与访存重的 decode 分池，各自最优（§05）'],
+  ['XGrammar','结构化输出','解码时逐 token 约束 JSON/正则/语法，比通用方案快数倍（§06）'],
+  ['HiCache','多层缓存','radix tree 扩成 GPU→CPU→外部存储三级，冷前缀下沉（§02）'],
+];
+document.getElementById('spec').innerHTML=
+  '<tr><th>特性</th><th>解决什么</th><th>说明</th></tr>'+
+  SPEC.map(r=>`<tr><td>${r[0]}</td><td class="v">${r[1]}</td><td>${r[2]}</td></tr>`).join('');
+
+// ---------- 8a. 启动命令逐行注解 ----------
+// base = 命令骨架；arg 用 <span> 上色；ann 是注解，ref 标到对应特性章节
+const LAUNCH=[
+  {arg:'python -m sglang.launch_server', cls:'base', ann:'启动 SGLang 推理服务（OpenAI 兼容 API）。'},
+  {arg:'--model-path deepseek-ai/DeepSeek-V2-Lite', ann:'要服务的模型（HF 仓库名或本地路径）。'},
+  {arg:'--tp 2', ann:'<b>张量并行度</b>：把每层权重切到 2 张卡。', ref:'§05 TP'},
+  {arg:'--ep 2', ann:'<b>专家并行度</b>：把 MoE 专家分散到 2 张卡，token all-to-all 路由。', ref:'§05 EP'},
+  {arg:'--mem-fraction-static 0.85', ann:'<b>显存水位</b>：拿 85% 显存给权重+KV cache。调高 → KV 池更大、能塞更多并发；太高会 OOM。'},
+  {arg:'--chunked-prefill-size 8192', ann:'长 prefill 切成 8192 token 的片，插进 decode 步，避免卡住别人。', ref:'§04'},
+  {arg:'--cuda-graph-max-bs 16', ann:'对 batch ≤16 的情况录制 CUDA graph 重放，砍 launch 开销。', ref:'§03'},
+  {arg:'--host 0.0.0.0 --port 30000', ann:'监听地址与端口。'},
+];
+(function(){
+  const box=document.getElementById('lcmd');
+  box.innerHTML=LAUNCH.map((l,i)=>{
+    // 给 flag/val 上色
+    let arg=l.arg;
+    if(l.cls==='base'){ arg=`<span class="base">${arg}</span>`; }
+    else{
+      arg=arg.replace(/^(--[\w-]+)(\s+)(.*)$/, '<span class="flag">$1</span>$2<span class="val">$3</span>');
+      arg=arg.replace(/^(--[\w-]+)$/, '<span class="flag">$1</span>');
+    }
+    const cont=i<LAUNCH.length-1?' \\':'';
+    const HREF={'§05 TP':'#sec-parallel','§05 EP':'#sec-parallel','§04':'#sec-batch','§03':'#sec-sched','§02':'#sec-radix'};
+    const ref=l.ref?` <a class="ref" href="${HREF[l.ref]||'#'}">▸ ${l.ref}</a>`:'';
+    return `<div class="lcrow"><span class="arg">${arg}${cont}</span><span class="ann">${l.ann}${ref}</span></div>`;
+  }).join('');
+})();
+
+// ---------- 8b. 分组参数表 ----------
+const ARGGROUPS=[
+  {g:'模型 & 服务', c:'var(--cyan)', rows:[
+    ['--model-path','（必填）','模型 HF 仓库名或本地权重路径'],
+    ['--served-model-name','=model-path','对外暴露的模型名（API 里用）'],
+    ['--host / --port','127.0.0.1 / 30000','监听地址与端口'],
+    ['--dtype','auto','权重精度：auto/bfloat16/float16'],
+    ['--quantization','—','量化：fp8 / awq / gptq / int4'],
+  ]},
+  {g:'并行 & 多卡（大模型/MoE 必调）', c:'var(--violet)', rows:[
+    ['--tp / --tp-size','1','张量并行度，权重切到 N 卡，每步 all-reduce'],
+    ['--ep / --ep-size','1','专家并行度（MoE），专家分散到 N 卡'],
+    ['--dp / --dp-size','1','数据并行度；配 --enable-dp-attention 时含义变为 attention 的按请求切分组数（见 §05 辨析），不再是复制整模型'],
+    ['--enable-two-batch-overlap','off','TBO：把 EP 的 all-to-all 藏到另一批计算后，最多 ~2×'],
+  ]},
+  {g:'显存 & KV cache', c:'var(--amber)', rows:[
+    ['--mem-fraction-static','~0.88','分给权重+KV 的显存比例；OOM 就调小，想要更大并发就调大'],
+    ['--max-running-requests','自动','running batch 最大并发请求数'],
+    ['--max-total-tokens','自动','KV cache 池的总 token 容量'],
+    ['--context-length','=模型','覆盖模型最大上下文长度'],
+  ]},
+  {g:'吞吐 & 延迟调优', c:'var(--phos)', rows:[
+    ['--chunked-prefill-size','8192','长 prefill 切片大小，-1 关闭'],
+    ['--cuda-graph-max-bs','自动','录制 CUDA graph 的最大 batch；调大省 launch、占更多显存'],
+    ['--schedule-policy','lpm','请求调度策略：lpm（最长前缀优先）/ fcfs'],
+    ['--disable-overlap-schedule','（默认开）','加上才会关掉零开销重叠调度（一般别动）'],
+    ['--disable-radix-cache','（默认开）','加上才会关掉 RadixAttention 前缀缓存（一般别动）'],
+  ]},
+];
+(function(){
+  const box=document.getElementById('arggroups');
+  box.innerHTML=ARGGROUPS.map(grp=>{
+    const head=`<div class="pgroup" style="--c:${grp.c}">${grp.g}</div>`;
+    const tbl=`<table class="args"><tr><th>参数</th><th>默认</th><th>作用</th></tr>`+
+      grp.rows.map(r=>`<tr><td class="flag">${r[0]}</td><td class="def">${r[1]}</td><td class="desc">${r[2]}</td></tr>`).join('')+
+      `</table>`;
+    return head+tbl;
+  }).join('');
+})();
+</script>
+<script src="../nav.js" data-base=".." data-active="sglang"></script>
+</body>
+</html>

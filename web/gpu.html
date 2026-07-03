@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPU 架构 · 一块卡怎么算，一群卡怎么连</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e0d; --panel:#111816; --panel-2:#0d1413;
+    --ink:#d8e6e0; --dim:#8a9e96;
+    --phos:#3dff9a; --amber:#ffb13d; --cyan:#39d0ff; --violet:#b78cff; --pink:#ff7eb6; --red:#ff5d5d;
+    --line:#223330; --grid:#1a2522;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #102b22 0%, transparent 55%),
+      radial-gradient(900px 500px at 0% 110%, #1a160a 0%, transparent 50%), var(--bg);
+    color:var(--ink); font-family:"Space Mono","PingFang SC","Noto Sans SC",monospace; line-height:1.6; overflow-x:hidden;
+  }
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 1px,transparent 1px 3px);mix-blend-mode:overlay}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 26px}
+  ::selection{background:var(--phos);color:#04140c}
+
+  header{padding:48px 0 8px}
+  .kicker{font-size:12px;letter-spacing:.3em;color:var(--phos);text-transform:uppercase;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--phos);box-shadow:0 0 12px var(--phos);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  h1{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:clamp(30px,5vw,54px);line-height:1.02;letter-spacing:-.02em;margin:14px 0 12px}
+  h1 em{font-style:normal;color:var(--phos);text-shadow:0 0 30px rgba(61,255,154,.35)}
+  .sub{max-width:800px;color:var(--dim);font-size:14px}
+  .sub b{color:var(--ink);font-weight:400;border-bottom:1px dashed var(--line)}
+
+  section{margin:44px 0}
+  .sectit{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:clamp(22px,3vw,30px);letter-spacing:-.01em;line-height:1.1;display:flex;align-items:baseline;gap:12px}
+  .sectit .no{font-family:"Space Mono",monospace;font-size:15px;font-weight:700;color:var(--phos);opacity:.8}
+  .seclead{color:var(--dim);font-size:13.5px;margin:10px 0 0;max-width:780px}
+  .seclead b{color:var(--ink);font-weight:400}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px}
+  .card.glow{border-left:3px solid var(--phos)}
+  .card.cy{border-left:3px solid var(--cyan)} .card.am{border-left:3px solid var(--amber)}
+  .card.vi{border-left:3px solid var(--violet)} .card.pk{border-left:3px solid var(--pink)}
+  .card h3{font-family:"Bricolage Grotesque",sans-serif;font-size:17px;font-weight:800;margin-bottom:8px}
+  .card p{font-size:13px;color:#bcd0c8;margin:8px 0}
+  .card p b{color:var(--ink)}
+  code{font-family:"Space Mono",monospace;background:var(--panel-2);border:1px solid var(--grid);border-radius:4px;padding:1px 6px;font-size:.9em;color:var(--cyan)}
+
+  .demo{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px;margin-top:18px}
+  .demo .hint{font-size:12px;color:var(--dim);margin-bottom:16px}
+  .demo .hint b{color:var(--phos)}
+
+  /* ===== §01 CPU vs GPU ===== */
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+  @media(max-width:760px){.twocol{grid-template-columns:1fr}}
+  .half{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .half.cpu{border-left:3px solid var(--cyan)} .half.gpu{border-left:3px solid var(--phos)}
+  .half h4{font-family:"Bricolage Grotesque",sans-serif;font-size:15px;font-weight:800;margin-bottom:4px}
+  .half.cpu h4{color:var(--cyan)} .half.gpu h4{color:var(--phos)}
+  .half .tagline{font-size:11px;color:var(--dim);margin-bottom:10px}
+  .half p{font-size:12.5px;color:#bcd0c8;line-height:1.6}
+  .diefig{display:flex;gap:5px;flex-wrap:wrap;margin-top:12px}
+  .diefig .bigcore{width:calc(25% - 4px);aspect-ratio:1.6;border-radius:6px;border:1px solid var(--cyan);
+    background:color-mix(in srgb,var(--cyan) 18%,var(--panel-2));display:flex;align-items:center;justify-content:center;
+    font-size:10px;color:#cdeeff}
+  .diefig .ctrl{width:100%;height:22px;border-radius:5px;border:1px dashed var(--grid);display:flex;align-items:center;justify-content:center;font-size:9.5px;color:var(--dim)}
+  .diefig.g{gap:3px}
+  .diefig.g .tinycore{width:calc(100%/16 - 3px);aspect-ratio:1;border-radius:2.5px;border:1px solid color-mix(in srgb,var(--phos) 45%,var(--grid));
+    background:color-mix(in srgb,var(--phos) 12%,var(--panel-2))}
+
+  /* 竞速动画 */
+  .race{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:680px){.race{grid-template-columns:1fr}}
+  .lane{background:var(--panel-2);border:1px solid var(--grid);border-radius:10px;padding:14px}
+  .lane .lt{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:13px;margin-bottom:2px}
+  .lane.c .lt{color:var(--cyan)} .lane.g .lt{color:var(--phos)}
+  .lane .ld{font-size:10.5px;color:var(--dim);margin-bottom:10px}
+  .taskgrid{display:grid;grid-template-columns:repeat(16,1fr);gap:3px}
+  .taskgrid i{display:block;aspect-ratio:1;border-radius:2px;background:#0a100e;border:1px solid var(--grid);transition:background .12s,border-color .12s,box-shadow .12s}
+  .lane.c .taskgrid i.done{background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 5px rgba(57,208,255,.5)}
+  .lane.g .taskgrid i.done{background:var(--phos);border-color:var(--phos);box-shadow:0 0 5px rgba(61,255,154,.5)}
+  .laneclk{margin-top:10px;font-size:11px;color:var(--dim);display:flex;justify-content:space-between;align-items:baseline}
+  .laneclk b{font-family:"Bricolage Grotesque",sans-serif;font-size:18px;font-weight:800}
+  .lane.c .laneclk b{color:var(--cyan)} .lane.g .laneclk b{color:var(--phos)}
+
+  .params{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+  .pchip{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:9px 14px;font-size:12px}
+  .pchip b{font-family:"Bricolage Grotesque",sans-serif;color:var(--phos);font-size:16px;font-weight:800;margin-right:6px}
+  .pchip.cy b{color:var(--cyan)} .pchip.am b{color:var(--amber)} .pchip.vi b{color:var(--violet)}
+  .pchip span{color:var(--dim)}
+
+  /* ===== §02 SM 解剖 ===== */
+  .smwrap{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;margin-top:18px}
+  @media(max-width:760px){.smwrap{grid-template-columns:1fr}}
+  .diecard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .diecard h4{font-family:"Bricolage Grotesque",sans-serif;font-size:14px;font-weight:800;margin-bottom:10px;color:var(--ink)}
+  .diecard h4 small{color:var(--dim);font-weight:400;font-size:10.5px;margin-left:6px}
+  .smgrid{display:grid;grid-template-columns:repeat(12,1fr);gap:3px}
+  .smgrid i{display:block;aspect-ratio:1.15;border-radius:2.5px;background:color-mix(in srgb,var(--phos) 8%,var(--panel-2));border:1px solid var(--grid);cursor:pointer;transition:.15s}
+  .smgrid i:hover,.smgrid i.hot{background:color-mix(in srgb,var(--phos) 40%,var(--panel-2));border-color:var(--phos);box-shadow:0 0 8px rgba(61,255,154,.5)}
+  .smzoom{background:var(--panel-2);border:1.5px solid var(--phos);border-radius:10px;padding:13px 15px;position:relative}
+  .smzoom::before{content:"1 个 SM(放大)";position:absolute;top:-9px;left:12px;background:var(--panel);padding:0 8px;
+    font-size:9.5px;letter-spacing:.14em;color:var(--phos);text-transform:uppercase}
+  .smrow{display:flex;gap:6px;margin:7px 0}
+  .smrow .blk{flex:1;border-radius:6px;padding:7px 9px;font-size:10px;line-height:1.4;border:1px solid var(--grid);background:var(--panel)}
+  .smrow .blk b{display:block;font-family:"Bricolage Grotesque",sans-serif;font-size:11px;font-weight:800}
+  .smrow .blk.cuda b{color:var(--phos)} .smrow .blk.tc b{color:var(--violet)}
+  .smrow .blk.reg b{color:var(--amber)} .smrow .blk.shm b{color:var(--cyan)}
+  .smrow .blk span{color:var(--dim);font-size:9.5px}
+  .smnote{font-size:11px;color:var(--dim);margin-top:10px;line-height:1.6}
+  .smnote b{color:var(--ink)}
+
+  /* 显存层级 */
+  .memhier{margin-top:16px}
+  .memrow{display:grid;grid-template-columns:150px 1fr 118px 92px;gap:12px;align-items:center;padding:9px 0;border-bottom:1px dashed var(--grid);font-size:12px}
+  @media(max-width:680px){.memrow{grid-template-columns:110px 1fr 90px}.memrow .mlat{display:none}}
+  .memrow.head{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line)}
+  .memrow .mn{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:12.5px}
+  .memrow .mn small{display:block;font-family:"Space Mono",monospace;font-weight:400;font-size:9.5px;color:var(--dim)}
+  .membar{height:14px;border-radius:7px;background:#0a100e;overflow:hidden}
+  .membar i{display:block;height:100%;width:0;border-radius:7px}
+  .memrow .mbw{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;text-align:right}
+  .memrow .mlat{color:var(--dim);text-align:right;font-size:11px}
+  .memrow:nth-child(2) .mn{color:var(--amber)} .memrow:nth-child(2) .membar i{background:var(--amber)} .memrow:nth-child(2) .mbw{color:var(--amber)}
+  .memrow:nth-child(3) .mn{color:var(--cyan)} .memrow:nth-child(3) .membar i{background:var(--cyan)} .memrow:nth-child(3) .mbw{color:var(--cyan)}
+  .memrow:nth-child(4) .mn{color:var(--violet)} .memrow:nth-child(4) .membar i{background:var(--violet)} .memrow:nth-child(4) .mbw{color:var(--violet)}
+  .memrow:nth-child(5) .mn{color:var(--phos)} .memrow:nth-child(5) .membar i{background:var(--phos)} .memrow:nth-child(5) .mbw{color:var(--phos)}
+
+  /* ===== §03 单机多卡 ===== */
+  .linkstage{position:relative;background:var(--panel-2);border:1px solid var(--grid);border-radius:12px;padding:20px;min-height:250px;margin-top:4px}
+  .nodebox{position:absolute;border-radius:10px;padding:10px 13px;border:1.5px solid var(--line);background:var(--panel);text-align:center;
+    transition:border-color .3s,box-shadow .3s}
+  .nodebox .nt{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:12px}
+  .nodebox .nd{font-size:9.5px;color:var(--dim);line-height:1.4;margin-top:2px}
+  .nodebox.hot{border-color:var(--phos);box-shadow:0 0 14px rgba(61,255,154,.3)}
+  .nodebox.hot-am{border-color:var(--amber);box-shadow:0 0 14px rgba(255,177,61,.3)}
+  .linkphase{font-family:"Space Mono",monospace;font-size:11px;color:var(--amber);margin:12px 0 2px;min-height:18px;letter-spacing:.05em}
+  .bwtag{position:absolute;font-size:10px;font-family:"Space Mono",monospace;color:var(--dim);background:var(--panel);
+    border:1px solid var(--grid);border-radius:5px;padding:2px 7px;white-space:nowrap;transition:.3s}
+  .bwtag.lit-am{color:var(--amber);border-color:var(--amber)}
+  .bwtag.lit-ph{color:var(--phos);border-color:var(--phos)}
+
+  table{width:100%;border-collapse:collapse;margin-top:16px;font-size:12px}
+  th{font-family:"Space Mono",monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);
+    text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  td{padding:9px 10px;border-bottom:1px dashed var(--grid);color:#bcd0c8;vertical-align:top}
+  td b{color:var(--ink)}
+  td.ph{color:var(--phos)} td.cy{color:var(--cyan)} td.am{color:var(--amber)} td.vi{color:var(--violet)}
+  tr.hl td{background:color-mix(in srgb,var(--phos) 7%,transparent)}
+  .genbar{display:inline-block;height:8px;border-radius:4px;background:var(--phos);vertical-align:middle;margin-right:8px;box-shadow:0 0 6px rgba(61,255,154,.4)}
+
+  /* NVSwitch mesh */
+  .meshstage{position:relative;background:var(--panel-2);border:1px solid var(--grid);border-radius:12px;padding:18px;margin-top:4px}
+  .meshrow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .meshgpu{background:var(--panel);border:1.5px solid var(--line);border-radius:9px;padding:9px 6px;text-align:center;transition:border-color .25s,box-shadow .25s}
+  .meshgpu .mg{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:11px;color:var(--cyan)}
+  .meshgpu .mm{font-size:9px;color:var(--dim)}
+  .meshgpu.tx{border-color:var(--phos);box-shadow:0 0 12px rgba(61,255,154,.35)}
+  .meshgpu.rx{border-color:var(--violet);box-shadow:0 0 12px rgba(183,140,255,.3)}
+  .switchbar{margin:26px 0;background:linear-gradient(90deg,color-mix(in srgb,var(--phos) 14%,var(--panel)),color-mix(in srgb,var(--cyan) 14%,var(--panel)));
+    border:1.5px solid var(--phos);border-radius:9px;padding:9px;text-align:center;transition:box-shadow .3s}
+  .switchbar.hot{box-shadow:0 0 22px rgba(61,255,154,.4)}
+  .switchbar .st{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:12.5px;color:var(--phos)}
+  .switchbar .sd{font-size:9.5px;color:var(--dim)}
+
+  /* ===== §04 跨节点 ===== */
+  .netstage{position:relative;background:var(--panel-2);border:1px solid var(--grid);border-radius:12px;padding:18px;margin-top:4px}
+  .nodecase{position:relative;border:1px dashed var(--line);border-radius:10px;padding:30px 12px 12px;min-height:150px}
+  .nodecase::before{content:attr(data-label);position:absolute;top:8px;left:12px;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+  .netgrid{display:grid;grid-template-columns:1fr .55fr 1fr;gap:14px;align-items:stretch}
+  @media(max-width:720px){.netgrid{grid-template-columns:1fr}.ibmid{min-height:70px}}
+  .inbox{border-radius:8px;border:1.5px solid var(--line);background:var(--panel);padding:7px 9px;text-align:center;margin:6px 0;
+    transition:border-color .3s,box-shadow .3s,opacity .3s}
+  .inbox .it{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:11px}
+  .inbox .idd{font-size:9px;color:var(--dim);line-height:1.35}
+  .inbox.gpu .it{color:var(--phos)} .inbox.cpu .it{color:var(--cyan)} .inbox.nic .it{color:var(--amber)}
+  .inbox.hot{border-color:var(--phos);box-shadow:0 0 12px rgba(61,255,154,.35)}
+  .inbox.hot-am{border-color:var(--amber);box-shadow:0 0 12px rgba(255,177,61,.35)}
+  .inbox.bypass{opacity:.32;border-style:dashed}
+  .ibmid{display:flex;align-items:center;justify-content:center}
+  .ibswitch{width:100%;border:1.5px solid var(--cyan);border-radius:9px;background:color-mix(in srgb,var(--cyan) 10%,var(--panel));
+    padding:12px 8px;text-align:center;transition:box-shadow .3s}
+  .ibswitch.hot{box-shadow:0 0 18px rgba(57,208,255,.4)}
+  .ibswitch .it{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:12px;color:var(--cyan)}
+  .ibswitch .idd{font-size:9px;color:var(--dim)}
+  .netclk{display:flex;gap:22px;margin-top:14px;font-size:11px;color:var(--dim);flex-wrap:wrap}
+  .netclk b{font-family:"Bricolage Grotesque",sans-serif;font-size:16px;font-weight:800}
+  .netclk .old b{color:var(--amber)} .netclk .new b{color:var(--phos)}
+
+  /* rail 拓扑 */
+  .railfig{display:grid;grid-template-columns:1fr;gap:8px;margin-top:14px;font-size:10.5px}
+  .railrow{display:grid;grid-template-columns:88px repeat(8,1fr);gap:6px;align-items:center}
+  .railrow .rl{color:var(--dim);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase}
+  .railrow .cell{border:1px solid var(--grid);background:var(--panel);border-radius:5px;text-align:center;padding:4px 2px;color:#bcd0c8;transition:.15s}
+  .railrow.sw .cell{border-color:color-mix(in srgb,var(--cyan) 45%,var(--grid));color:var(--cyan)}
+  .railfig[data-rail="on"] .cell[data-rail-idx="3"]{border-color:var(--phos);color:var(--phos);box-shadow:0 0 8px rgba(61,255,154,.4)}
+  .railhint{font-size:11px;color:var(--dim);margin-top:10px}
+  .railhint b{color:var(--phos);cursor:pointer;border-bottom:1px dashed var(--phos)}
+
+  /* ===== §05 集合通信 ===== */
+  .prims{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}
+  .prims.four{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:760px){.prims{grid-template-columns:1fr 1fr}}
+  @media(max-width:520px){.prims,.prims.four{grid-template-columns:1fr}}
+  .prim{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 15px}
+  .prim .pt{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:13px;margin-bottom:3px}
+  .prim .pd{font-size:11px;color:#bcd0c8;line-height:1.55}
+  .prim .pu{font-size:9.5px;color:var(--dim);margin-top:7px;padding-top:7px;border-top:1px dashed var(--grid)}
+  .prim .pu b{color:var(--amber);font-weight:400}
+  .prim:nth-child(1) .pt{color:var(--phos)} .prim:nth-child(2) .pt{color:var(--cyan)} .prim:nth-child(3) .pt{color:var(--violet)}
+  .prim:nth-child(4) .pt{color:var(--amber)} .prim:nth-child(5) .pt{color:var(--pink)} .prim:nth-child(6) .pt{color:var(--red)}
+
+  /* Ring AllReduce */
+  .ringstage{position:relative;margin-top:4px;background:var(--panel-2);border:1px solid var(--grid);border-radius:12px;padding:18px}
+  .ringgrid{display:grid;grid-template-columns:1fr 1fr;gap:56px 90px;max-width:620px;margin:0 auto;padding:10px 0}
+  .rgpu{background:var(--panel);border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;position:relative;transition:border-color .3s,box-shadow .3s}
+  .rgpu.tx{border-color:var(--phos);box-shadow:0 0 12px rgba(61,255,154,.3)}
+  .rgpu .rn{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:11.5px;color:var(--cyan);margin-bottom:7px}
+  .slots{display:flex;gap:6px}
+  .slot{flex:1;text-align:center}
+  .slot .bar{height:34px;border-radius:5px;background:#0a100e;border:1px solid var(--grid);position:relative;overflow:hidden}
+  .slot .bar i{position:absolute;left:0;right:0;bottom:0;height:25%;transition:height .35s ease,box-shadow .35s}
+  .slot[data-c="0"] .bar i{background:var(--phos)} .slot[data-c="1"] .bar i{background:var(--cyan)}
+  .slot[data-c="2"] .bar i{background:var(--amber)} .slot[data-c="3"] .bar i{background:var(--violet)}
+  .slot.full .bar{border-color:#fff}
+  .slot.full .bar i{box-shadow:0 0 12px 2px rgba(255,255,255,.35)}
+  .slot .sl{font-size:9px;color:var(--dim);margin-top:3px}
+  .ringphase{font-family:"Space Mono",monospace;font-size:11px;color:var(--amber);min-height:18px;margin:8px 0 2px;letter-spacing:.05em;text-align:center}
+  .ringmath{font-size:11.5px;color:var(--dim);margin-top:14px;border-top:1px dashed var(--grid);padding-top:11px;line-height:1.7}
+  .ringmath b{color:var(--phos)}
+
+  /* ===== §06 梯子 ===== */
+  .ladder{margin-top:16px}
+  .ladrow{display:grid;grid-template-columns:190px 1fr 110px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--grid);font-size:12px}
+  @media(max-width:680px){.ladrow{grid-template-columns:130px 1fr 84px}}
+  .ladrow .ln{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:12.5px}
+  .ladrow .ln small{display:block;font-family:"Space Mono",monospace;font-weight:400;font-size:9.5px;color:var(--dim)}
+  .ladbar{height:13px;border-radius:6px;background:#0a100e;overflow:hidden}
+  .ladbar i{display:block;height:100%;width:0;border-radius:6px}
+  .ladrow .lv{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;text-align:right;font-size:13px}
+  .ladnote{font-size:11px;color:var(--dim);margin-top:12px;line-height:1.7}
+  .ladnote b{color:var(--ink)}
+
+  .takeaway{background:linear-gradient(135deg,color-mix(in srgb,var(--phos) 8%,var(--panel)),var(--panel));
+    border:1px solid color-mix(in srgb,var(--phos) 35%,var(--line));border-radius:14px;padding:22px 24px;margin-top:18px}
+  .takeaway h3{font-family:"Bricolage Grotesque",sans-serif;font-size:17px;font-weight:800;color:var(--phos);margin-bottom:10px}
+  .takeaway ol{margin-left:20px;font-size:13px;color:#bcd0c8}
+  .takeaway li{margin:7px 0}
+  .takeaway li b{color:var(--ink)}
+
+  footer{margin:60px 0 40px;padding-top:20px;border-top:1px solid var(--line);font-size:11px;color:var(--dim);line-height:1.8}
+  footer a{color:var(--cyan);text-decoration:none}
+  footer a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker"><span class="dot"></span>GPU EXPLAINER · 硬件基础 · 从一块卡到一个集群</div>
+  <h1>GPU 是怎么算的,<br>一群 GPU 又是<em>怎么连</em>的</h1>
+  <p class="sub">后面所有页面(Transformer、MoE、SGLang、PD 分离)都跑在这层硬件之上。这一页讲两件事:<b>单卡内部</b>——为什么 GPU 天生适合矩阵乘;<b>卡与卡之间</b>——单机 8 卡靠 NVLink/NVSwitch,跨机靠 InfiniBand/RoCE,以及 NCCL 集合通信怎么用这些管道。记住一条主线:<b>算力越堆越多,瓶颈越来越是"数据怎么搬"</b>。</p>
+</header>
+
+<!-- ============ §01 ============ -->
+<section id="s1">
+  <div class="sectit"><span class="no">§01</span>CPU 与 GPU:两种设计哲学</div>
+  <p class="seclead">同样的晶体管预算,CPU 花在<b>让单个任务尽快完成</b>(大缓存、分支预测、乱序执行),GPU 花在<b>同时做尽量多份同样的活</b>(把控制逻辑砍到最少,剩下全堆计算单元)。LLM 推理的主体是矩阵乘——几百万个"乘加"彼此独立,正中 GPU 下怀。</p>
+
+  <div class="twocol">
+    <div class="half cpu">
+      <h4>CPU · 延迟机器</h4>
+      <div class="tagline">几十个重型核心,每个都很聪明</div>
+      <p>每个核心配备大缓存、分支预测、乱序执行——大部分芯片面积花在"猜下一步干什么"上。擅长逻辑复杂、彼此依赖的串行任务:调度、网络、tokenize。</p>
+      <div class="diefig">
+        <div class="ctrl">控制逻辑 / 分支预测 / 大缓存(占面积大头)</div>
+        <div class="bigcore">Core</div><div class="bigcore">Core</div><div class="bigcore">Core</div><div class="bigcore">Core</div>
+        <div class="bigcore">Core</div><div class="bigcore">Core</div><div class="bigcore">Core</div><div class="bigcore">Core</div>
+      </div>
+    </div>
+    <div class="half gpu">
+      <h4>GPU · 吞吐机器</h4>
+      <div class="tagline">上万个轻型核心,每个都很简单</div>
+      <p>砍掉复杂控制逻辑,同一条指令由一组线程(<b>warp,32 线程</b>)同步执行——这叫 <b>SIMT</b>。单线程慢没关系,靠海量并行 + 超高显存带宽赢回来。</p>
+      <div class="diefig g" id="gpudie"></div>
+    </div>
+  </div>
+
+  <div class="demo" id="racedemo">
+    <div class="hint"><b>竞速</b>:128 个独立的乘加任务。CPU 8 核一批批做;GPU 上万核,一波全部铺开。▶ 播放</div>
+    <div class="race">
+      <div class="lane c">
+        <div class="lt">CPU · 8 核</div><div class="ld">每拍处理 8 个,16 拍做完</div>
+        <div class="taskgrid" id="cpu-tasks"></div>
+        <div class="laneclk"><span>耗时</span><b id="cpu-clk">0 拍</b></div>
+      </div>
+      <div class="lane g">
+        <div class="lt">GPU · 上万核</div><div class="ld">一拍全部铺开</div>
+        <div class="taskgrid" id="gpu-tasks"></div>
+        <div class="laneclk"><span>耗时</span><b id="gpu-clk">0 拍</b></div>
+      </div>
+    </div>
+    <div id="race-ctl"></div>
+  </div>
+
+  <div class="params">
+    <div class="pchip"><b>16896</b><span>H100 的 FP32 核心数(132 SM × 128)</span></div>
+    <div class="pchip cy"><b>~64</b><span>旗舰服务器 CPU 核心数</span></div>
+    <div class="pchip am"><b>3.35 TB/s</b><span>H100 HBM3 带宽(CPU 内存的 ~7 倍)</span></div>
+    <div class="pchip vi"><b>~990 TFLOPS</b><span>H100 BF16 Tensor 算力(CPU 的百倍级)</span></div>
+  </div>
+</section>
+
+<!-- ============ §02 ============ -->
+<section id="s2">
+  <div class="sectit"><span class="no">§02</span>拆开一块 H100</div>
+  <p class="seclead">GPU 的基本组织单位是 <b>SM(Streaming Multiprocessor,流式多处理器)</b>。H100 有 132 个 SM,每个 SM 是一台小型的向量计算机:自带计算单元、寄存器和一小块超快的共享内存。CUDA kernel 启动时,成千上万个线程块被撒到这些 SM 上并行执行。</p>
+
+  <div class="smwrap">
+    <div class="diecard">
+      <h4>H100 die · 132 个 SM <small>悬停任意小格</small></h4>
+      <div class="smgrid" id="smgrid"></div>
+      <div class="smnote">一次矩阵乘会被切成许多 tile,每个 tile 交给一个线程块,由某个 SM 执行。<b>SM 越多、喂得越饱,吞吐越高</b>——"GPU 利用率"本质上是"SM 有没有活干"。</div>
+    </div>
+    <div class="smzoom">
+      <div class="smrow">
+        <div class="blk cuda"><b>128 × CUDA Core</b><span>标量/向量运算,FP32·FP64·INT32</span></div>
+      </div>
+      <div class="smrow">
+        <div class="blk tc"><b>4 × Tensor Core</b><span>专吃小矩阵乘(GEMM),BF16/FP8 下一拍完成一整块 MMA——LLM 算力主力,占 H100 峰值算力 ~90%</span></div>
+      </div>
+      <div class="smrow">
+        <div class="blk reg"><b>寄存器堆 256 KB</b><span>每线程私有,零延迟</span></div>
+        <div class="blk shm"><b>共享内存/L1 256 KB</b><span>线程块内交换数据,手动管理的"草稿纸"</span></div>
+      </div>
+      <div class="smnote">线程以 <b>32 个一组(warp)</b>锁步执行同一条指令;一个 SM 同时驻留几十个 warp,某个 warp 等显存时立刻切换到别的 warp——<b>用并行掩盖延迟</b>,这是 GPU 不需要大缓存的原因。</div>
+    </div>
+  </div>
+
+  <div class="card glow" id="memhiercard">
+    <h3>显存层级:每一层差一个数量级</h3>
+    <p>算得快的前提是喂得上数据。从寄存器到 HBM,容量每大一级,带宽/延迟就差一个量级——<b>高性能 kernel 的全部技巧,就是让数据尽量停留在上层</b>(FlashAttention 的本质就是把注意力计算重排到共享内存里做完)。</p>
+    <div class="memhier" id="memhier">
+      <div class="memrow head"><span>层级</span><span>相对带宽</span><span style="text-align:right">带宽</span><span class="mlat" style="text-align:right">延迟</span></div>
+      <div class="memrow"><span class="mn">寄存器<small>~32 MB 总量 · 片上</small></span><div class="membar"><i data-w="100"></i></div><span class="mbw" data-roll="600" data-suf=" TB/s+">0</span><span class="mlat">~1 cycle</span></div>
+      <div class="memrow"><span class="mn">共享内存 / L1<small>256 KB × 132 SM</small></span><div class="membar"><i data-w="62"></i></div><span class="mbw" data-roll="33" data-suf=" TB/s">0</span><span class="mlat">~30 cycles</span></div>
+      <div class="memrow"><span class="mn">L2 缓存<small>50 MB · 全芯片共享</small></span><div class="membar"><i data-w="38"></i></div><span class="mbw" data-roll="12" data-suf=" TB/s">0</span><span class="mlat">~200 cycles</span></div>
+      <div class="memrow"><span class="mn">HBM3 显存<small>80 GB · 3D 堆叠在旁边</small></span><div class="membar"><i data-w="20"></i></div><span class="mbw" data-roll="3.35" data-dec="2" data-suf=" TB/s">0</span><span class="mlat">~500 cycles</span></div>
+    </div>
+    <p style="font-size:11.5px;color:var(--dim);margin-top:12px">Decode 阶段每生成 1 个 token 都要把全部权重从 HBM 读一遍,算力却只用一点——所以 decode 是<b style="color:var(--amber)">显存带宽瓶颈</b>(memory-bound),这是后面 PD 分离页的出发点。</p>
+  </div>
+</section>
+
+<!-- ============ §03 ============ -->
+<section id="s3">
+  <div class="sectit"><span class="no">§03</span>单机多卡:PCIe → NVLink → NVSwitch</div>
+  <p class="seclead">单卡 80 GB 放不下几百 GB 的模型权重,于是切给多卡(TP/EP)。但张量并行<b>每一层都要在卡间同步一次</b>——通信走什么管道,直接决定多卡是加速还是"等通信"。</p>
+
+  <div class="card am">
+    <h3>默认管道:PCIe——所有设备的公共走廊</h3>
+    <p>没有专用互联时,GPU 之间只能走 PCIe:数据先从 GPU-0 出发,经过 PCIe 交换机(甚至绕道 CPU 内存),再进 GPU-1。PCIe 5.0 ×16 单向 <b>64 GB/s</b>——听着不小,但和 HBM 的 3350 GB/s 比,差了 <b>50 倍</b>,而且这条走廊还要和网卡、SSD 共享。</p>
+    <p>NVIDIA 的答案是给 GPU 修专线:<b>NVLink</b>——点对点直连,不经过 CPU,不挤公共走廊。H100 每卡 18 条 NVLink 4 链路,合计双向 <b>900 GB/s</b>,是 PCIe 的 7 倍。</p>
+  </div>
+
+  <div class="demo" id="linkdemo">
+    <div class="hint"><b>同一份 16 GB 权重分片</b>,从 GPU-0 搬到 GPU-1:先走 PCIe(绕道 CPU),再走 NVLink 直连。注意路径和速度差。</div>
+    <div class="linkstage" id="linkstage">
+      <div class="nodebox" id="lk-cpu" style="left:50%;top:16px;transform:translateX(-50%)"><div class="nt">CPU / PCIe Switch</div><div class="nd">公共走廊 · 中转</div></div>
+      <div class="nodebox" id="lk-g0" style="left:6%;top:52%"><div class="nt">GPU 0</div><div class="nd">HBM 80 GB</div></div>
+      <div class="nodebox" id="lk-g1" style="right:6%;top:52%"><div class="nt">GPU 1</div><div class="nd">HBM 80 GB</div></div>
+      <span class="bwtag" id="bw-pcie" style="left:50%;top:44%;transform:translateX(-50%)">PCIe 5.0 ×16 · 64 GB/s</span>
+      <span class="bwtag" id="bw-nvl" style="left:50%;bottom:14px;transform:translateX(-50%)">NVLink 4 · 900 GB/s(18 条链路)</span>
+    </div>
+    <div class="linkphase" id="lk-phase">&nbsp;</div>
+    <div id="lk-ctl"></div>
+  </div>
+
+  <div class="card">
+    <h3>NVLink 代际:每代翻倍</h3>
+    <table id="nvlgen"></table>
+    <p style="font-size:11.5px;color:var(--dim)">Blackwell 一代的 NVL72 机柜用 NVLink 5 + NVSwitch 把 <b>72 块 GPU</b> 连成一个统一高速域——"单机"的边界从 8 卡扩大到了一整个机柜。</p>
+  </div>
+
+  <div class="card glow">
+    <h3>NVSwitch:从"专线"到"全连接交换机"</h3>
+    <p>NVLink 直连有个几何问题:8 块卡两两互连需要 28 条通路,每卡的 18 条链路摊薄后点对点带宽就低了。<b>NVSwitch 是 NVLink 的交换芯片</b>:每块 GPU 把全部 18 条链路接进交换平面(DGX H100 用 4 颗 NVSwitch3),于是<b>任意两卡之间都是满速 900 GB/s,且互不争抢</b>——all-to-all 流量(MoE 的 EP 通信)尤其受益。</p>
+  </div>
+
+  <div class="demo" id="meshdemo">
+    <div class="hint"><b>DGX H100 · 8 卡全互联</b>:先看单卡对单卡满速,再看 8 卡同时 all-to-all——交换平面下没有"绕路",也没有"堵车"。</div>
+    <div class="meshstage" id="meshstage">
+      <div class="meshrow" id="mesh-top"></div>
+      <div class="switchbar" id="meshsw"><div class="st">NVSwitch × 4 · 交换平面</div><div class="sd">任意两卡 900 GB/s · 无争抢 · 总交换容量 7.2 TB/s</div></div>
+      <div class="meshrow" id="mesh-bot"></div>
+    </div>
+    <div class="linkphase" id="mesh-phase">&nbsp;</div>
+    <div id="mesh-ctl"></div>
+  </div>
+</section>
+
+<!-- ============ §04 ============ -->
+<section id="s4">
+  <div class="sectit"><span class="no">§04</span>多机多卡:跨节点,进入网络的世界</div>
+  <p class="seclead">8 卡装不下 DeepSeek-V3(671B),训练更要几千卡——必须跨机器。NVLink 出不了机箱(NVL72 机柜除外),跨节点靠<b>网卡 + 交换机</b>:带宽再降一个台阶,延迟从百纳秒涨到微秒级。</p>
+
+  <div class="prims four">
+    <div class="prim"><div class="pt">InfiniBand</div><div class="pd">HPC 血统的专用网络,原生 RDMA、微秒级延迟、无损传输。NDR 一代每端口 <b style="color:var(--ink)">400 Gb/s = 50 GB/s</b>。大规模训练集群的主流选择。</div><div class="pu">DGX H100 每台配 <b>8 张</b> ConnectX-7,每卡一张网卡</div></div>
+    <div class="prim"><div class="pt">RoCE</div><div class="pd">RDMA over Converged Ethernet——在以太网上跑 RDMA。便宜、生态通用,但要精细调优(PFC/ECN 防丢包)才能接近 IB 的表现。</div><div class="pu">云厂商自建集群常用,<b>省钱换运维复杂度</b></div></div>
+    <div class="prim"><div class="pt">AWS EFA</div><div class="pd">AWS 自研的第三条路——不是 IB 也不是 RoCE。底层跑自研 <b style="color:var(--ink)">SRD 协议</b>:允许乱序到达、把包喷洒到多条路径,天生适配云的多路径网络,不需要 PFC 无损配置。OS-bypass + 支持 GPUDirect RDMA。p5en(8×H200)每实例 16 张 EFA,聚合 <b style="color:var(--ink)">3.2 Tb/s = 400 GB/s</b>,摊到每 GPU 与 IB NDR 同量级。</div><div class="pu">AWS 上跑多机训练/推理的<b>唯一 RDMA 选择</b>(不提供 IB)· NCCL 经 aws-ofi-nccl 插件走 libfabric;但 EFA 没有 IBGDA,不支持 GPU 直接发起 RDMA——这个坑由 UCCL-EP 来填(见 §05)</div></div>
+    <div class="prim"><div class="pt">GPUDirect RDMA</div><div class="pd">让网卡<b style="color:var(--ink)">直接读写 GPU 显存</b>,数据不再经过 CPU 内存中转。跨机 GPU→GPU 延迟和 CPU 占用双降。IB / RoCE / EFA 三种网络都支持。</div><div class="pu">NCCL 检测到支持时<b>自动启用</b></div></div>
+  </div>
+
+  <div class="demo" id="netdemo">
+    <div class="hint"><b>跨节点搬运一份 KV cache / 梯度</b>:传统路径要在 CPU 内存"弹跳"两次;GPUDirect RDMA 让网卡直接 DMA 显存,CPU 全程旁观。</div>
+    <div class="netstage">
+      <div class="netgrid" id="netgrid">
+        <div class="nodecase" data-label="节点 A">
+          <div class="inbox gpu" id="na-gpu"><div class="it">GPU 0 · HBM</div><div class="idd">数据源</div></div>
+          <div class="inbox cpu" id="na-cpu"><div class="it">CPU · DRAM</div><div class="idd">弹跳缓冲(旧路径)</div></div>
+          <div class="inbox nic" id="na-nic"><div class="it">NIC · ConnectX-7</div><div class="idd">400 Gb/s</div></div>
+        </div>
+        <div class="ibmid"><div class="ibswitch" id="ibsw"><div class="it">IB / RoCE / EFA 网络</div><div class="idd">胖树 / rail 拓扑</div></div></div>
+        <div class="nodecase" data-label="节点 B">
+          <div class="inbox gpu" id="nb-gpu"><div class="it">GPU 0 · HBM</div><div class="idd">目的地</div></div>
+          <div class="inbox cpu" id="nb-cpu"><div class="it">CPU · DRAM</div><div class="idd">弹跳缓冲(旧路径)</div></div>
+          <div class="inbox nic" id="nb-nic"><div class="it">NIC · ConnectX-7</div><div class="idd">400 Gb/s</div></div>
+        </div>
+      </div>
+      <div class="netclk">
+        <span class="old">传统路径(经 CPU 弹跳)<br><b id="clk-old">0</b> 跳</span>
+        <span class="new">GPUDirect RDMA<br><b id="clk-new">0</b> 跳</span>
+      </div>
+    </div>
+    <div class="linkphase" id="net-phase">&nbsp;</div>
+    <div id="net-ctl"></div>
+  </div>
+
+  <div class="card cy">
+    <h3>Rail-optimized 拓扑:8 张网卡,8 条"轨道"</h3>
+    <p>DGX 每台 8 GPU 配 8 NIC,组网时把<b>所有节点的第 i 张网卡接到同一台 leaf 交换机</b>——这条平面叫 rail(轨道)。NCCL 的跨机流量大多是"节点 A 的 GPU-i ↔ 节点 B 的 GPU-i",正好整条压在 rail-i 上,<b>一跳直达、各轨互不干扰</b>。</p>
+    <div class="railfig" id="railfig">
+      <div class="railrow"><span class="rl">节点 A · GPU</span><span class="cell" data-rail-idx="0">G0</span><span class="cell" data-rail-idx="1">G1</span><span class="cell" data-rail-idx="2">G2</span><span class="cell" data-rail-idx="3">G3</span><span class="cell" data-rail-idx="4">G4</span><span class="cell" data-rail-idx="5">G5</span><span class="cell" data-rail-idx="6">G6</span><span class="cell" data-rail-idx="7">G7</span></div>
+      <div class="railrow sw"><span class="rl">Leaf 交换机</span><span class="cell" data-rail-idx="0">rail 0</span><span class="cell" data-rail-idx="1">rail 1</span><span class="cell" data-rail-idx="2">rail 2</span><span class="cell" data-rail-idx="3">rail 3</span><span class="cell" data-rail-idx="4">rail 4</span><span class="cell" data-rail-idx="5">rail 5</span><span class="cell" data-rail-idx="6">rail 6</span><span class="cell" data-rail-idx="7">rail 7</span></div>
+      <div class="railrow"><span class="rl">节点 B · GPU</span><span class="cell" data-rail-idx="0">G0</span><span class="cell" data-rail-idx="1">G1</span><span class="cell" data-rail-idx="2">G2</span><span class="cell" data-rail-idx="3">G3</span><span class="cell" data-rail-idx="4">G4</span><span class="cell" data-rail-idx="5">G5</span><span class="cell" data-rail-idx="6">G6</span><span class="cell" data-rail-idx="7">G7</span></div>
+    </div>
+    <div class="railhint">悬停/点击 <b id="railbtn">rail 3</b> 看一条轨道:A 的 G3 → rail-3 交换机 → B 的 G3,一跳直达。</div>
+  </div>
+</section>
+
+<!-- ============ §05 ============ -->
+<section id="s5">
+  <div class="sectit"><span class="no">§05</span>集合通信:NCCL 的语言</div>
+  <p class="seclead">应用层不直接操心 NVLink 还是 IB——大家调 <b>NCCL</b>(NVIDIA Collective Communications Library)。它把"多卡协同"抽象成几个<b>集合通信原语</b>,并自动探测拓扑、选最优路径(机内走 NVSwitch,跨机走 RDMA)和算法(ring / tree)。</p>
+
+  <div class="prims">
+    <div class="prim"><div class="pt">AllReduce</div><div class="pd">每张卡各有一份数据,求和后<b style="color:var(--ink)">每张卡都拿到完整结果</b>。出现频率最高的原语。</div><div class="pu">用在 <b>TP 每层的部分和聚合</b> · DP 梯度同步</div></div>
+    <div class="prim"><div class="pt">AllGather</div><div class="pd">每张卡各持一片,结束后每张卡都集齐所有分片。</div><div class="pu">用在 <b>TP 拼接激活</b> · ZeRO 取回参数分片</div></div>
+    <div class="prim"><div class="pt">ReduceScatter</div><div class="pd">先求和、再把结果切片分给各卡——AllReduce 的前半程。</div><div class="pu">用在 <b>ZeRO/FSDP 梯度分片</b></div></div>
+    <div class="prim"><div class="pt">All-to-All</div><div class="pd">每张卡给每张卡发一份不同的数据,N² 条流同时跑——最吃交换带宽。</div><div class="pu">用在 <b>MoE 专家并行(EP)</b>的 token 分发/回收 → 见 MoE 页</div></div>
+    <div class="prim"><div class="pt">Broadcast</div><div class="pd">一张卡的数据复制到所有卡。</div><div class="pu">用在 <b>权重加载</b> · 采样参数下发</div></div>
+    <div class="prim"><div class="pt">P2P Send/Recv</div><div class="pd">点对点收发,不是集合操作但同样走 NCCL。</div><div class="pu">用在 <b>PP 级间传激活</b> · PD 分离传 KV cache → 见 PD 页</div></div>
+  </div>
+
+  <div class="demo" id="ringdemo">
+    <div class="hint"><b>Ring AllReduce</b>,NCCL 的看家算法:4 卡连成环,数据切 4 块。前半程 <b>Reduce-Scatter</b>(边传边加,3 步后每卡握有 1 块完整和),后半程 <b>All-Gather</b>(把完整块转 3 圈,人手一份)。柱高 = 该块已累加的份数,白框 = 完整。</div>
+    <div class="ringstage" id="ringstage">
+      <div class="ringgrid" id="ringgrid"></div>
+      <div class="ringphase" id="ring-phase">&nbsp;</div>
+    </div>
+    <div id="ring-ctl"></div>
+    <div class="ringmath">为什么用环?每卡每步只和邻居通信,链路利用率 100%。每卡总通信量 = <b>2×(N−1)/N × 数据量 ≈ 2×数据量</b>,<b>与卡数 N 几乎无关</b>——这就是 AllReduce 能扩展到几千卡的原因。代价是 2(N−1) 步的延迟,所以小消息 NCCL 会自动切换 tree 算法。</div>
+  </div>
+
+  <div class="card vi">
+    <h3>并行策略 × 通信原语 × 硬件层级:一张对照表</h3>
+    <p>选并行策略,本质是把通信压到它能承受的硬件层级上:</p>
+    <table id="mapping"></table>
+  </div>
+
+  <div class="card pk">
+    <h3>NCCL 之外:为 MoE / PD 分离定制的通信库</h3>
+    <p>NCCL 的集合原语是"整齐"的——所有卡同步参与、数据量对称。但 MoE 的 all-to-all <b>每个 token 去向不同、数据量不对称</b>,PD 分离的 KV 传输是<b>异步点对点大块搬运</b>——通用 NCCL 都不是最优解,于是出现了一批专用库:</p>
+    <div class="prims" style="grid-template-columns:repeat(3,1fr)">
+      <div class="prim">
+        <div class="pt">DeepEP <span style="font-weight:400;font-size:9.5px;color:var(--dim)">DeepSeek · 2025 开源</span></div>
+        <div class="pd">专为 EP 的 dispatch/combine 写的 all-to-all 内核。两大杀招:① <b style="color:var(--ink)">GPU 直接发起 RDMA</b>(NVSHMEM/IBGDA,连 CPU 都不惊动,token 级细粒度收发);② <b style="color:var(--ink)">两级转发</b>——token 先走 IB 到目标节点上"同号 GPU",再走 NVLink 转给目标专家,两条管道同时打满,仅需 ~20 个 SM。低延迟模式用 hook 方式做通信-计算重叠,不占 SM。</div>
+        <div class="pu">DeepSeek-V3/R1 大 EP 推理的基石 · SGLang <code style="font-size:9px">--enable-deepep-moe</code> · 但<b>绑死 NVIDIA GPU + ConnectX/IB</b></div>
+      </div>
+      <div class="prim">
+        <div class="pt">UCCL-EP <span style="font-weight:400;font-size:9.5px;color:var(--dim)">UC Berkeley 等 · 2025</span></div>
+        <div class="pd">解决 DeepEP 的移植性:EFA、Broadcom 网卡没有 IBGDA,GPU 没法直接指挥网卡。UCCL-EP 把"发起"和"执行"拆开——GPU 照旧做 token 级路由决策,通过无锁 FIFO 把命令递给 <b style="color:var(--ink)">CPU 代理线程</b>,由 CPU 代发 GPUDirect RDMA。API 与 DeepEP 兼容,支持 NVIDIA/AMD GPU × ConnectX/EFA/Broadcom 网卡。</div>
+        <div class="pu">在 EFA 上比现有方案快至 <b>2.1×</b>,SGLang token 吞吐 +40% ——<b>在 AWS 上跑大 EP 就靠它</b>(本项目的场景!)</div>
+      </div>
+      <div class="prim">
+        <div class="pt">Mooncake <span style="font-weight:400;font-size:9.5px;color:var(--dim)">Moonshot/Kimi · FAST'25 最佳论文</span></div>
+        <div class="pd">不是 EP 库,而是 <b style="color:var(--ink)">KV cache 为中心</b>的一整套 PD 分离架构:Transfer Engine 负责跨节点零拷贝搬 KV(RDMA 多网卡聚合、拓扑感知);Mooncake Store 把集群里闲置的 <b style="color:var(--ink)">CPU 内存 + SSD</b> 组成分布式 KV 池,prefill 结果全局复用。</div>
+        <div class="pu">Kimi 生产系统,长上下文吞吐最高 +525% · SGLang/vLLM 的 <b>PD 分离传输后端</b>之一 → 见 PD 分离页</div>
+      </div>
+    </div>
+    <p style="font-size:11.5px;color:var(--dim);margin-top:12px">一句话分工:<b style="color:var(--phos)">NCCL</b> 管整齐的集合通信(TP/DP),<b style="color:var(--pink)">DeepEP / UCCL-EP</b> 管 MoE 的不规则 all-to-all(UCCL-EP = 能跑在 EFA/AMD 上的 DeepEP),<b style="color:var(--pink)">Mooncake</b> 管 PD 分离的 KV cache 搬运和存储。</p>
+  </div>
+</section>
+
+<!-- ============ §06 ============ -->
+<section id="s6">
+  <div class="sectit"><span class="no">§06</span>带宽全景:一张梯子记住所有数字</div>
+  <p class="seclead">把本页出现过的管道排在一起(对数刻度)。<b>每下一级台阶,慢一个数量级</b>——系统设计的所有取舍都写在这张梯子上。</p>
+
+  <div class="card" id="laddercard">
+    <div class="ladder" id="ladder"></div>
+    <div class="ladnote">读法:TP 的每层 AllReduce 必须留在 <b>NVLink 层</b>(所以 TP 一般不出单机);EP 的 all-to-all 尽量留在 NVSwitch 域;跨机只放低频大粒度通信(<b>PP 传激活、DP 同步梯度、PD 分离传 KV</b>);而 decode 的根本瓶颈 HBM 带宽,在梯子最顶端——这条排序,决定了后面每一页的架构选择。</div>
+  </div>
+
+  <div class="takeaway">
+    <h3>带走这 5 句话</h3>
+    <ol>
+      <li><b>GPU 赢在吞吐</b>:上万个简单核心 + SIMT + 高带宽显存,专为"海量同构计算"(矩阵乘)设计。</li>
+      <li><b>SM 是执行单位,Tensor Core 是算力主力</b>;显存层级每层差一个数量级,快 kernel 的秘诀是少碰 HBM。</li>
+      <li><b>单机多卡</b>:PCIe 是公共走廊(64 GB/s),NVLink 是专线(900 GB/s),NVSwitch 把 8 卡连成无争抢的全交换域。</li>
+      <li><b>多机多卡</b>:InfiniBand/RoCE(自建)或 EFA(AWS)+ GPUDirect RDMA,网卡直读显存;rail 拓扑让 GPU-i ↔ GPU-i 一跳直达。</li>
+      <li><b>NCCL 原语是通信的词汇表</b>:TP→AllReduce(机内),EP→All-to-All,PP/PD→P2P(可跨机);不规则通信有专用库——MoE 用 DeepEP(IB)/UCCL-EP(EFA),PD 分离的 KV 搬运用 Mooncake。</li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  下一步:<a href="transformer.html">Transformer 原理</a> 看这些算力用来算什么 · <a href="moe.html">MoE 架构</a> 看 All-to-All 的实战 · <a href="pd.html">PD 分离</a> 看 KV cache 怎么跨卡搬运。<br>
+  数字以 H100 SXM / DGX H100 为基准,不同 SKU 有差异;带宽均为双向聚合口径,量级为准。
+</footer>
+
+</div><!-- /wrap -->
+
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/ScrollTrigger.min.js"></script>
+<script src="vendor/MotionPathPlugin.min.js"></script>
+<script src="gx.js"></script>
+<script>
+'use strict';
+
+// ---------- 工具:沿弧线飞点 ----------
+function flyDot(svg, fig, fromEl, toEl, o){
+  o = o || {};
+  if (GX.reduced()) return;
+  const a = GX.center(fromEl, fig), b = GX.center(toEl, fig);
+  const d = GX.arc(a, b, o.bend == null ? .18 : o.bend);
+  const p = GX.svgEl('path', {d, fill:'none', stroke:o.color||'var(--phos)', 'stroke-width':1, 'stroke-dasharray':'3 5', opacity:.35}, svg);
+  const r = o.size || 4.5;
+  const dot = GX.svgEl('circle', {r, fill:o.color||'#3dff9a'}, svg);
+  dot.style.filter = 'drop-shadow(0 0 5px ' + (o.color||'#3dff9a') + ')';
+  gsap.set(dot, {x:a.x, y:a.y});
+  gsap.to(dot, {motionPath:{path:d}, duration:o.dur||.8, delay:o.delay||0, ease:o.ease||'power1.inOut',
+    onComplete(){ dot.remove(); p.remove(); if(o.onArrive) o.onArrive(); }});
+  gsap.to(p, {opacity:0, delay:(o.delay||0)+(o.dur||.8), duration:.3, onComplete(){ p.remove(); }});
+}
+
+// ---------- §01 GPU die 小格 ----------
+(function(){
+  const die = document.getElementById('gpudie');
+  for (let i=0;i<64;i++){ const s=document.createElement('span'); s.className='tinycore'; die.appendChild(s); }
+})();
+
+// ---------- §01 CPU vs GPU 竞速 ----------
+(function(){
+  const N=128, BATCH=8;
+  const cg=document.getElementById('cpu-tasks'), gg=document.getElementById('gpu-tasks');
+  for(let i=0;i<N;i++){ cg.appendChild(document.createElement('i')); gg.appendChild(document.createElement('i')); }
+  const cc=[...cg.children], gc=[...gg.children];
+  const cclk=document.getElementById('cpu-clk'), gclk=document.getElementById('gpu-clk');
+
+  const tl=gsap.timeline({paused:true});
+  tl.call(()=>{ cc.forEach(e=>e.classList.remove('done')); gc.forEach(e=>e.classList.remove('done'));
+    cclk.textContent='0 拍'; gclk.textContent='0 拍'; });
+  tl.addLabel('go', .2);
+  // GPU:一拍全亮
+  tl.call(()=>{ gclk.textContent='1 拍'; GX.flash(gg.parentElement); }, null, 'go');
+  gc.forEach((e,i)=>tl.call(()=>e.classList.add('done'), null, 'go+='+(Math.random()*.28).toFixed(3)));
+  // CPU:16 拍,每拍 8 个
+  for(let b=0;b<N/BATCH;b++){
+    const t='go+='+(b*.22).toFixed(2);
+    tl.call(((b)=>()=>{ cclk.textContent=(b+1)+' 拍';
+      cc.slice(b*BATCH,(b+1)*BATCH).forEach(e=>e.classList.add('done')); })(b), null, t);
+  }
+  tl.to({}, {duration:N/BATCH*.22+.4});
+  GX.controls(document.getElementById('race-ctl'), tl);
+  GX.autoplayOnVisible(document.getElementById('racedemo'), tl);
+})();
+
+// ---------- §02 SM 网格 ----------
+(function(){
+  const g=document.getElementById('smgrid');
+  for(let i=0;i<132;i++){ const s=document.createElement('i'); s.title='SM '+i; g.appendChild(s); }
+  // 进场波浪:滚到视口时亮一遍
+  const tl=gsap.timeline({paused:true});
+  const cells=[...g.children];
+  tl.call(()=>cells.forEach(c=>c.classList.remove('hot')));
+  cells.forEach((c,i)=>{
+    tl.call(()=>c.classList.add('hot'), null, .02*(i%12)+.05*Math.floor(i/12));
+    tl.call(()=>c.classList.remove('hot'), null, .02*(i%12)+.05*Math.floor(i/12)+.5);
+  });
+  tl.to({},{duration:.02*11+.05*11+.6});
+  GX.autoplayOnVisible(g, tl);
+})();
+
+// ---------- §02 显存层级数字 ----------
+(function(){
+  const host=document.getElementById('memhier');
+  const tl=gsap.timeline({paused:true});
+  host.querySelectorAll('.membar i').forEach((bar,i)=>{
+    tl.to(bar,{width:bar.dataset.w+'%',duration:.7,ease:'power2.out'},i*.12);
+  });
+  tl.call(()=>{
+    host.querySelectorAll('.mbw').forEach(el=>{
+      GX.roll(el,+el.dataset.roll,{dur:.8,decimals:+(el.dataset.dec||0),suffix:el.dataset.suf||''});
+    });
+  },null,.1);
+  GX.autoplayOnVisible(host, tl);
+})();
+
+// ---------- §03 PCIe vs NVLink ----------
+(function(){
+  const fig=document.getElementById('linkstage');
+  const svg=GX.overlay(fig);
+  const g0=document.getElementById('lk-g0'), g1=document.getElementById('lk-g1'), cpu=document.getElementById('lk-cpu');
+  const phase=document.getElementById('lk-phase');
+  const bwP=document.getElementById('bw-pcie'), bwN=document.getElementById('bw-nvl');
+  const clean=()=>{ [g0,g1,cpu].forEach(e=>e.classList.remove('hot','hot-am'));
+    bwP.classList.remove('lit-am'); bwN.classList.remove('lit-ph'); };
+
+  const tl=gsap.timeline({paused:true});
+  tl.call(()=>{ clean(); phase.textContent=''; });
+  tl.addLabel('pcie', .2);
+  tl.call(()=>{ phase.textContent='① PCIe 路径:GPU0 → CPU/Switch → GPU1 · 64 GB/s,~250 ms';
+    bwP.classList.add('lit-am'); g0.classList.add('hot-am');
+    flyDot(svg, fig, g0, cpu, {color:'#ffb13d', dur:1.1, bend:-.15, size:5,
+      onArrive(){ cpu.classList.add('hot-am'); GX.flash(cpu,'#ffb13d');
+        flyDot(svg, fig, cpu, g1, {color:'#ffb13d', dur:1.1, bend:-.15, size:5,
+          onArrive(){ g1.classList.add('hot-am'); GX.flash(g1,'#ffb13d'); }}); }});
+  }, null, 'pcie');
+  tl.to({},{duration:2.9});
+  tl.addLabel('nvl');
+  tl.call(()=>{ clean(); phase.textContent='② NVLink 直连:GPU0 → GPU1 · 900 GB/s,~18 ms(7 倍带宽,零中转)';
+    bwN.classList.add('lit-ph'); g0.classList.add('hot');
+    for(let i=0;i<3;i++) flyDot(svg, fig, g0, g1, {color:'#3dff9a', dur:.42, delay:i*.09, bend:.34+.07*i, size:4,
+      onArrive: i===2 ? ()=>{ g1.classList.add('hot'); GX.flash(g1); } : null});
+  }, null, 'nvl');
+  tl.to({},{duration:1.4});
+  tl.call(()=>{ phase.textContent='同一份数据,两条路差一个数量级——这就是 TP 只在 NVLink 域内做的原因。'; });
+  tl.to({},{duration:.5});
+  GX.controls(document.getElementById('lk-ctl'), tl, {labels:true});
+  GX.autoplayOnVisible(fig, tl);
+})();
+
+// ---------- §03 NVLink 代际表 ----------
+(function(){
+  const GEN=[
+    ['NVLink 1','P100 · 2016',160],
+    ['NVLink 2','V100 · 2017',300],
+    ['NVLink 3','A100 · 2020',600],
+    ['NVLink 4','H100 · 2022',900,1],
+    ['NVLink 5','B200 / GB200 · 2024',1800],
+  ];
+  document.getElementById('nvlgen').innerHTML=
+    '<tr><th>代际</th><th>代表 GPU</th><th>每卡双向带宽</th></tr>'+
+    GEN.map(r=>`<tr${r[3]?' class="hl"':''}><td><b>${r[0]}</b></td><td>${r[1]}</td>`+
+      `<td class="ph"><span class="genbar" style="width:${r[2]/22}px"></span>${r[2]} GB/s</td></tr>`).join('')+
+    `<tr><td>参照:PCIe 5.0 ×16</td><td>—</td><td class="am"><span class="genbar" style="width:${128/22}px;background:var(--amber)"></span>128 GB/s</td></tr>`;
+})();
+
+// ---------- §03 NVSwitch mesh ----------
+(function(){
+  const top=document.getElementById('mesh-top'), bot=document.getElementById('mesh-bot');
+  const gpus=[];
+  for(let i=0;i<8;i++){
+    const d=document.createElement('div'); d.className='meshgpu';
+    d.innerHTML=`<div class="mg">GPU ${i}</div><div class="mm">18×NVLink</div>`;
+    (i<4?top:bot).appendChild(d); gpus.push(d);
+  }
+  const fig=document.getElementById('meshstage'), svg=GX.overlay(fig);
+  const sw=document.getElementById('meshsw'), phase=document.getElementById('mesh-phase');
+  const clean=()=>{ gpus.forEach(g=>g.classList.remove('tx','rx')); sw.classList.remove('hot'); };
+  const send=(i,j,color,delay)=>{
+    flyDot(svg, fig, gpus[i], sw, {color, dur:.4, delay:delay||0, bend:.06, size:3.5,
+      onArrive(){ sw.classList.add('hot');
+        flyDot(svg, fig, sw, gpus[j], {color, dur:.4, bend:.06, size:3.5,
+          onArrive(){ gpus[j].classList.add('rx'); }}); }});
+  };
+  const tl=gsap.timeline({paused:true});
+  tl.call(()=>{ clean(); phase.textContent=''; });
+  tl.addLabel('p2p', .2);
+  tl.call(()=>{ clean(); phase.textContent='① 点对点:GPU2 → GPU5,经交换平面一跳,满速 900 GB/s';
+    gpus[2].classList.add('tx'); send(2,5,'#3dff9a'); }, null, 'p2p');
+  tl.to({},{duration:1.6});
+  tl.addLabel('one2all');
+  tl.call(()=>{ clean(); phase.textContent='② 一对多:GPU2 向其余 7 卡广播——各流独立,互不影响';
+    gpus[2].classList.add('tx');
+    [0,1,3,4,5,6,7].forEach((j,k)=>send(2,j,'#39d0ff',k*.07)); }, null, 'one2all');
+  tl.to({},{duration:2});
+  tl.addLabel('a2a');
+  tl.call(()=>{ clean(); phase.textContent='③ All-to-All:8 卡互发(MoE 的 EP 通信)——无争抢,这正是 NVSwitch 的价值';
+    gpus.forEach(g=>g.classList.add('tx'));
+    for(let i=0;i<8;i++) for(let k=0;k<2;k++){
+      const j=(i+1+((i*3+k*5)%7))%8;
+      send(i, j===i?(i+1)%8:j, ['#3dff9a','#b78cff'][k], (i*2+k)*.08);
+    } }, null, 'a2a');
+  tl.to({},{duration:2.4});
+  tl.call(()=>{ clean(); phase.textContent='对比:无 NVSwitch 的 PCIe 服务器上,这些流量全挤一条公共走廊。'; });
+  tl.to({},{duration:.5});
+  GX.controls(document.getElementById('mesh-ctl'), tl, {labels:true});
+  GX.autoplayOnVisible(fig, tl);
+})();
+
+// ---------- §04 GPUDirect RDMA ----------
+(function(){
+  const fig=document.getElementById('netgrid'), svg=GX.overlay(fig);
+  const el=id=>document.getElementById(id);
+  const naG=el('na-gpu'), naC=el('na-cpu'), naN=el('na-nic'),
+        nbG=el('nb-gpu'), nbC=el('nb-cpu'), nbN=el('nb-nic'), sw=el('ibsw');
+  const phase=el('net-phase'), cOld=el('clk-old'), cNew=el('clk-new');
+  const all=[naG,naC,naN,nbG,nbC,nbN];
+  const clean=()=>{ all.forEach(e=>e.classList.remove('hot','hot-am','bypass')); sw.classList.remove('hot'); };
+  const hop=(from,to,color,onArrive)=>flyDot(svg,fig,from,to,{color,dur:.55,bend:.12,size:4.5,onArrive});
+
+  const tl=gsap.timeline({paused:true});
+  tl.call(()=>{ clean(); phase.textContent=''; cOld.textContent='0'; cNew.textContent='0'; });
+  tl.addLabel('old', .2);
+  tl.call(()=>{ clean(); phase.textContent='① 传统路径:HBM → CPU DRAM → NIC → 交换机 → NIC → CPU DRAM → HBM(6 跳,CPU 两头忙)';
+    naG.classList.add('hot-am');
+    hop(naG,naC,'#ffb13d',()=>{ naC.classList.add('hot-am'); cOld.textContent='1';
+    hop(naC,naN,'#ffb13d',()=>{ naN.classList.add('hot-am'); cOld.textContent='2';
+    hop(naN,sw,'#ffb13d',()=>{ sw.classList.add('hot'); cOld.textContent='3';
+    hop(sw,nbN,'#ffb13d',()=>{ nbN.classList.add('hot-am'); cOld.textContent='4';
+    hop(nbN,nbC,'#ffb13d',()=>{ nbC.classList.add('hot-am'); cOld.textContent='5';
+    hop(nbC,nbG,'#ffb13d',()=>{ nbG.classList.add('hot-am'); cOld.textContent='6'; GX.flash(nbG,'#ffb13d'); });});});});});});
+  }, null, 'old');
+  tl.to({},{duration:3.9});
+  tl.addLabel('rdma');
+  tl.call(()=>{ clean(); phase.textContent='② GPUDirect RDMA:NIC 直接 DMA 显存,CPU 全程旁观(3 跳)';
+    naC.classList.add('bypass'); nbC.classList.add('bypass');
+    naG.classList.add('hot'); cNew.textContent='0';
+    hop(naG,naN,'#3dff9a',()=>{ naN.classList.add('hot'); cNew.textContent='1';
+    hop(naN,sw,'#3dff9a',()=>{ sw.classList.add('hot'); cNew.textContent='2';
+    hop(sw,nbN,'#3dff9a',()=>{ nbN.classList.add('hot'); cNew.textContent='2';
+    hop(nbN,nbG,'#3dff9a',()=>{ nbG.classList.add('hot'); cNew.textContent='3'; GX.flash(nbG); });});});});
+  }, null, 'rdma');
+  tl.to({},{duration:2.8});
+  tl.call(()=>{ phase.textContent='跳数减半、免两次内存拷贝——PD 分离跨机传 KV cache 靠的就是这条路。'; });
+  tl.to({},{duration:.5});
+  GX.controls(document.getElementById('net-ctl'), tl, {labels:true});
+  GX.autoplayOnVisible(fig, tl);
+})();
+
+// ---------- §04 rail 高亮 ----------
+(function(){
+  const fig=document.getElementById('railfig'), btn=document.getElementById('railbtn');
+  const on=v=>fig.setAttribute('data-rail', v?'on':'off');
+  btn.addEventListener('mouseenter',()=>on(true));
+  btn.addEventListener('mouseleave',()=>on(false));
+  btn.addEventListener('click',()=>on(fig.getAttribute('data-rail')!=='on'));
+  fig.querySelectorAll('[data-rail-idx="3"]').forEach(c=>{
+    c.addEventListener('mouseenter',()=>on(true)); c.addEventListener('mouseleave',()=>on(false));
+  });
+})();
+
+// ---------- §05 Ring AllReduce ----------
+(function(){
+  const N=4, LETTER=['A','B','C','D'], COLOR=['#3dff9a','#39d0ff','#ffb13d','#b78cff'];
+  const grid=document.getElementById('ringgrid');
+  const gpus=[];
+  for(let g=0;g<N;g++){
+    const d=document.createElement('div'); d.className='rgpu';
+    d.innerHTML=`<div class="rn">GPU ${g}</div><div class="slots">`+
+      LETTER.map((L,c)=>`<div class="slot" data-c="${c}"><div class="bar"><i></i></div><div class="sl">${L}</div></div>`).join('')+`</div>`;
+    grid.appendChild(d); gpus.push(d);
+  }
+  // 视觉环序:G0(左上)→G1(右上)→G3?  grid 顺序是 0,1 / 2,3;环取 0→1→3→2→0
+  const RING=[0,1,3,2];
+  const nextOf=i=>RING[(RING.indexOf(i)+1)%N];
+  const posOf=i=>RING.indexOf(i);
+
+  // 预计算每步之后的状态 counts[gpu][chunk](份数 1..4);chunk 按环上位置轮转
+  const states=[]; let c=Array.from({length:N},()=>Array(N).fill(1));
+  states.push(c.map(r=>[...r]));
+  for(let s=0;s<N-1;s++){ // reduce-scatter
+    const nc=c.map(r=>[...r]);
+    for(const i of RING){ const ch=((posOf(i)-s)%N+N)%N; nc[nextOf(i)][ch]+=c[i][ch]; }
+    c=nc; states.push(c.map(r=>[...r]));
+  }
+  for(let s=0;s<N-1;s++){ // all-gather
+    const nc=c.map(r=>[...r]);
+    for(const i of RING){ const ch=((posOf(i)+1-s)%N+N)%N; nc[nextOf(i)][ch]=N; }
+    c=nc; states.push(c.map(r=>[...r]));
+  }
+  const render=st=>{
+    gpus.forEach((d,g)=>d.querySelectorAll('.slot').forEach((sl,ch)=>{
+      const v=st[g][ch];
+      sl.querySelector('i').style.height=(v/N*100)+'%';
+      sl.classList.toggle('full', v===N);
+    }));
+  };
+  render(states[0]);
+
+  const fig=document.getElementById('ringstage'), svg=GX.overlay(fig);
+  const phase=document.getElementById('ring-phase');
+  const stepAnim=(s,isRS)=>{
+    gpus.forEach(d=>d.classList.add('tx'));
+    for(const i of RING){
+      const ch=isRS ? ((posOf(i)-s)%N+N)%N : ((posOf(i)+1-s)%N+N)%N;
+      flyDot(svg, fig, gpus[i], gpus[nextOf(i)], {color:COLOR[ch], dur:.6, bend:.16, size:5});
+    }
+  };
+  const tl=gsap.timeline({paused:true});
+  tl.call(()=>{ render(states[0]); gpus.forEach(d=>d.classList.remove('tx'));
+    phase.textContent='初始:每卡持有自己那份完整数据(4 块,各 1 份)'; });
+  for(let s=0;s<N-1;s++){
+    tl.addLabel('rs'+s, '+=0.9');
+    tl.call(((s)=>()=>{ phase.textContent=`Reduce-Scatter · 第 ${s+1}/3 步:传给下家,边收边加`;
+      render(states[s]); stepAnim(s,true); })(s), null, 'rs'+s);
+    tl.call(((s)=>()=>{ render(states[s+1]); gpus.forEach(d=>d.classList.remove('tx')); })(s), null, 'rs'+s+'+=0.7');
+  }
+  tl.addLabel('mid', '+=0.9');
+  tl.call(()=>{ phase.textContent='Reduce-Scatter 完成:每卡握有 1 块完整的和(白框)'; }, null, 'mid');
+  for(let s=0;s<N-1;s++){
+    tl.addLabel('ag'+s, '+=0.9');
+    tl.call(((s)=>()=>{ phase.textContent=`All-Gather · 第 ${s+1}/3 步:把完整块转给下家`;
+      render(states[N-1+s]); stepAnim(s,false); })(s), null, 'ag'+s);
+    tl.call(((s)=>()=>{ render(states[N+s]); gpus.forEach(d=>d.classList.remove('tx')); })(s), null, 'ag'+s+'+=0.7');
+  }
+  tl.addLabel('done', '+=0.9');
+  tl.call(()=>{ phase.textContent='完成:每张卡都拿到全部 4 块完整和 —— AllReduce ✓(共 6 步)'; }, null, 'done');
+  tl.to({},{duration:.6});
+  GX.controls(document.getElementById('ring-ctl'), tl, {labels:true});
+  GX.autoplayOnVisible(fig, tl);
+})();
+
+// ---------- §05 对照表 ----------
+(function(){
+  const M=[
+    ['TP 张量并行','AllReduce / AllGather','<b>每层 1-2 次</b>,极高频','NVLink / NVSwitch(机内)','带宽不够时通信吞掉所有收益'],
+    ['EP 专家并行','All-to-All ×2','每个 MoE 层','NVSwitch 域优先,大 EP 跨机走 IB/EFA','DeepEP(IB)/ UCCL-EP(EFA)两级分发'],
+    ['PP 流水并行','P2P Send/Recv','每 micro-batch 一次','跨机 OK(IB/RoCE)','通信量小,靠流水掩盖'],
+    ['DP 数据并行','AllReduce(梯度)','每个 step 一次','跨机 OK,可与计算重叠','推理不涉及;训练最常见'],
+    ['PD 分离','P2P(KV cache)','每请求一次','NVLink 或 RDMA','Mooncake / NIXL 做传输层,见 PD 分离页'],
+  ];
+  document.getElementById('mapping').innerHTML=
+    '<tr><th>并行策略</th><th>主要原语</th><th>频率</th><th>要求的硬件层级</th><th>备注</th></tr>'+
+    M.map(r=>`<tr><td><b>${r[0]}</b></td><td class="vi">${r[1]}</td><td>${r[2]}</td><td class="cy">${r[3]}</td><td style="color:var(--dim)">${r[4]}</td></tr>`).join('');
+})();
+
+// ---------- §06 带宽梯子 ----------
+(function(){
+  // 对数刻度:log10(GB/s),范围 ~[1, 3.6]
+  const L=[
+    ['HBM3 显存','卡内 · 权重/KV 读写',3350,'var(--phos)','3.35 TB/s'],
+    ['NVLink 4 + NVSwitch','机内 · 卡↔卡',900,'var(--cyan)','900 GB/s'],
+    ['PCIe 5.0 ×16','机内公共走廊 · 卡↔CPU/NIC',128,'var(--amber)','128 GB/s'],
+    ['InfiniBand NDR ×1','跨机 · 每网卡(DGX 每 GPU 一张)',50,'var(--violet)','50 GB/s'],
+    ['AWS EFA(p5en)','跨机 · 每 GPU 摊 400 Gb/s(整机 3.2 Tb/s)',50,'var(--red)','50 GB/s'],
+    ['100GbE 以太网','跨机 · 普通网络',12.5,'var(--pink)','12.5 GB/s'],
+  ];
+  const lg=v=>Math.log10(v);
+  const min=lg(8), max=lg(4200);
+  const host=document.getElementById('ladder');
+  host.innerHTML=L.map(r=>{
+    const w=((lg(r[2])-min)/(max-min)*100).toFixed(1);
+    return `<div class="ladrow"><span class="ln" style="color:${r[3]}">${r[0]}<small>${r[1]}</small></span>`+
+      `<div class="ladbar"><i data-w="${w}" style="background:${r[3]};box-shadow:0 0 8px ${r[3]}55"></i></div>`+
+      `<span class="lv" style="color:${r[3]}">${r[4]}</span></div>`;
+  }).join('');
+  const tl=gsap.timeline({paused:true});
+  host.querySelectorAll('.ladbar i').forEach((bar,i)=>{
+    tl.to(bar,{width:bar.dataset.w+'%',duration:.7,ease:'power2.out'},i*.14);
+  });
+  GX.autoplayOnVisible(host, tl);
+})();
+</script>
+<script src="../nav.js" data-base=".." data-active="gpu"></script>
+</body>
+</html>

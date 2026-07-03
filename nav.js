@@ -1,13 +1,17 @@
-// 共享左侧菜单栏 —— 两个页面都 <script src=".../nav.js"> 引入。
+// 共享左侧菜单栏 —— 各页面都 <script src=".../nav.js"> 引入。
 // 加新页面：只需在下面 PAGES 数组里加一行，并在新页面引入本脚本。
 //
 // 用法（在各页面 <body> 末尾）：
-//   根页面 :  <script src="nav.js"      data-base="."  data-active="principle"></script>
-//   web 页面: <script src="../nav.js"   data-base=".." data-active="realtrace"></script>
+//   web 页面: <script src="../nav.js"   data-base=".." data-active="sglang"></script>
+//   根页面（如有）: <script src="nav.js" data-base="." data-active="..."></script>
 (function () {
   // ---- 页面注册表（新增页面只改这里）----
   const PAGES = [
-    { id: 'principle', icon: '◈', label: '原理动画',   desc: 'CPU·PCIe·GPU·NVLink', href: 'index.html' },
+    { id: 'gpu', icon: '▦', label: 'GPU 架构', desc: 'SM · NVLink · 集合通信', href: 'web/gpu.html' },
+    { id: 'transformer', icon: '⌬', label: 'Transformer 原理', desc: 'GPT-2 · 注意力机制', href: 'web/transformer.html' },
+    { id: 'moe', icon: '⧉', label: 'MoE 架构', desc: '稀疏专家 · Router · EP', href: 'web/moe.html' },
+    { id: 'sglang', icon: '◊', label: 'SGLang 引擎', desc: 'RadixAttention · 零开销调度', href: 'web/sglang.html' },
+    { id: 'pd', icon: '⇹', label: 'PD 分离', desc: 'Prefill/Decode 分池 · KV 传输', href: 'web/pd.html' },
     { id: 'realtrace', icon: '◉', label: '真实数据流', desc: 'DeepSeek MoE · 实测 trace', href: 'web/index.html', live: true },
     // 例：{ id:'kvcache', icon:'▣', label:'KV Cache', desc:'Decode 显存增长', href:'web/kvcache.html' },
   ];
@@ -80,7 +84,7 @@
   const nav = document.createElement('nav');
   nav.id = 'sidenav';
   nav.innerHTML = `
-    <a class="brand" href="${href('index.html')}">
+    <a class="brand" href="${href(PAGES[0].href)}">
       <span class="bdot"></span>
       <span class="bt">GPU<br>EXPLAINER</span>
     </a>

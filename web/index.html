@@ -10,7 +10,7 @@
 <style>
   :root{
     --bg:#0a0e0d; --panel:#111816; --panel-2:#0d1413;
-    --ink:#d8e6e0; --dim:#6f857d;
+    --ink:#d8e6e0; --dim:#8a9e96;
     --phos:#3dff9a; --amber:#ffb13d; --cyan:#39d0ff; --violet:#b78cff; --pink:#ff7eb6; --red:#ff5d5d;
     --line:#223330; --grid:#1a2522;
   }
@@ -19,7 +19,7 @@
     background:
       radial-gradient(1200px 600px at 80% -10%, #102b22 0%, transparent 55%),
       radial-gradient(900px 500px at 0% 110%, #1a160a 0%, transparent 50%), var(--bg);
-    color:var(--ink); font-family:"Space Mono",monospace; line-height:1.6; overflow-x:hidden;
+    color:var(--ink); font-family:"Space Mono","PingFang SC","Noto Sans SC",monospace; line-height:1.6; overflow-x:hidden;
   }
   body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;
     background:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 1px,transparent 1px 3px);mix-blend-mode:overlay}
@@ -49,7 +49,6 @@
   .kbd{font-family:"Space Mono",monospace;font-size:10px;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 6px;background:var(--panel-2)}
   .hint{font-size:11px;color:var(--dim);letter-spacing:.02em;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   .clock{font-size:13px;color:var(--amber)}.clock b{color:var(--ink)}
-  .doing{font-size:12px;color:var(--dim);letter-spacing:.04em}.doing b{color:var(--phos)}
   .speed{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--dim);margin-left:auto}
   input[type=range]{accent-color:var(--phos);width:120px}
   .dsbox{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim)}
@@ -195,6 +194,11 @@
   .hbmcell.act:not(.wseg){fill:var(--violet);filter:drop-shadow(0 0 3px var(--violet))}
   /* 权重分段：active 时用提亮发光，不覆盖各自颜色 */
   .hbmcell.wseg.act{filter:brightness(1.3);opacity:1 !important}
+  .expcell{fill:#1a1420;stroke:#0c1210;stroke-width:.5;transition:fill .15s,opacity .15s}
+  .expcell.on{fill:var(--pink);filter:drop-shadow(0 0 2px var(--pink))}
+  .expflow{stroke:var(--pink);stroke-width:1.5;fill:none;stroke-dasharray:3 4;opacity:0;transition:opacity .2s}
+  .expflow.on{opacity:.65;animation:expdash 1s linear infinite}
+  @keyframes expdash{to{stroke-dashoffset:-14}}
   .smcell{fill:#16201d;stroke:#0c1210;stroke-width:.7;transition:fill .1s,filter .1s}
   .smcell.busy{fill:var(--phos);filter:drop-shadow(0 0 2px var(--phos))}
   .smcell.moe{fill:var(--pink);filter:drop-shadow(0 0 2px var(--pink))}
@@ -202,33 +206,52 @@
   .pcieline.act{stroke:var(--cyan);opacity:.85;stroke-dasharray:none}
   .nvlink{stroke:var(--violet);stroke-width:5;stroke-linecap:round;opacity:.12;transition:opacity .15s}
   .nvlink.act{opacity:.6}
-  .lbl{font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.04em}
+  .lbl{font-family:"Space Mono","PingFang SC","Noto Sans SC",monospace;font-size:10px;letter-spacing:.04em}
   .barbg{fill:#0a100e;stroke:var(--grid);stroke-width:.8}
   .barfill{transition:width .12s}
 
-  /* 时间轴 scrubber */
-  .tl{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
-  .tlhead{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:8px}
-  .strip{position:relative;height:30px;display:flex;border:1px solid var(--grid);border-radius:5px;overflow:hidden;background:#0a100e;cursor:pointer}
-  .strip .c{flex:1;height:100%}
-  .strip .scrub{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;z-index:5;pointer-events:none}
-  .stripleg{display:flex;gap:14px;font-size:10px;color:var(--dim);margin-top:7px;flex-wrap:wrap}
-  .stripleg span{display:flex;align-items:center;gap:5px}.stripleg i{width:9px;height:9px;border-radius:2px}
+  /* mini 时间轴（160 桶 × 4 泳道，canvas 绘制 + 可拖动 playhead） */
+  .mtl{margin-top:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .mtl-head{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--dim);margin-bottom:8px;gap:10px;flex-wrap:wrap}
+  .mtl-head .mtl-t{color:var(--amber)}
+  .mtl-body{position:relative;border:1px solid var(--grid);border-radius:5px;overflow:hidden;background:#0a100e;cursor:crosshair;touch-action:none}
+  .mtl-body canvas{display:block;width:100%;height:96px}
+  .mtl-ph{position:absolute;left:0;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;z-index:5;pointer-events:none;will-change:transform}
+  .mtl-leg{display:flex;gap:14px;font-size:10px;color:var(--dim);margin-top:7px;flex-wrap:wrap}
+  .mtl-leg span{display:flex;align-items:center;gap:5px}.mtl-leg i{width:9px;height:9px;border-radius:2px}
+  /* 模式切换（讲解 / 回放） */
+  .modeseg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .modeseg button{font-family:"Space Mono","PingFang SC",monospace;font-size:12px;font-weight:700;background:transparent;color:var(--dim);border:none;padding:9px 14px;cursor:pointer;transition:.15s}
+  .modeseg button.on{background:var(--phos);color:#04140c}
+  .modeseg button:not(.on):hover{color:var(--ink)}
+  /* 加载遮罩（终端风闪烁光标） */
+  .loadmask{position:absolute;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+    background:rgba(10,14,13,.72);backdrop-filter:blur(2px);font-size:14px;color:var(--phos);letter-spacing:.18em}
+  .loadmask::after{content:"▌";margin-left:4px;animation:pulse 1s steps(2) infinite}
+  /* board 角落「实测/示意」徽章 */
+  .measbadge{position:absolute;right:12px;bottom:10px;z-index:6;font-size:9.5px;letter-spacing:.1em;color:var(--dim);
+    border:1px solid var(--line);border-radius:4px;padding:2px 8px;background:rgba(13,20,19,.85);cursor:help}
+  .measbadge b{color:var(--phos);font-weight:700} .measbadge i{color:var(--cyan);font-style:normal}
+  /* CPU launch / GPU 执行 overlap 微舞台 */
+  .ovl{margin-top:12px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+  .ovl-head{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim);letter-spacing:.08em;margin-bottom:4px}
+  .ovl-head b{color:var(--amber);font-weight:700}
+  .ovl svg{display:block;width:100%;height:auto}
 
   .legend{display:flex;flex-wrap:wrap;gap:14px;margin:14px 4px 0;font-size:11px;color:var(--dim)}
   .legend span{display:flex;align-items:center;gap:6px}
   .sw{width:16px;height:3px;border-radius:2px;display:inline-block}.sw.dot{width:10px;height:10px;border-radius:50%}
 
-  .row{display:grid;grid-template-columns:1.25fr .75fr;gap:22px;margin-top:20px}
-  @media(max-width:820px){.row{grid-template-columns:1fr}.console{gap:10px}.speed{margin-left:0}}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px}
-  .card h3{font-family:"Bricolage Grotesque",sans-serif;font-size:18px;font-weight:800;margin-bottom:4px}
-  .card .meta{font-size:11px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px}
-  .card p{font-size:13px;color:#bcd0c8}
-  .stat{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
-  .stat:last-child{border:none}.stat .k{color:var(--dim)}.stat .v{color:var(--phos);font-weight:700}
-  .stat .v.amber{color:var(--amber)}.stat .v.cyan{color:var(--cyan)}.stat .v.violet{color:var(--violet)}
+  @media(max-width:820px){.console{gap:10px}.speed{margin-left:0}}
   .note{font-size:11.5px;color:var(--dim);font-style:italic;margin-top:10px;border-left:2px solid var(--line);padding-left:10px}
+  @media(max-width:620px){svg .pnlabel{display:none}}
+  @media (prefers-reduced-motion: reduce){
+    body::before{display:none}
+    .kicker .dot{animation:none}
+    .substep-detail,.host-note{animation:none}
+    .loadmask::after{animation:none}
+    .expflow.on{animation:none}
+  }
 
   footer{border-top:1px solid var(--line);margin-top:36px;padding:24px 0 56px;color:var(--dim);font-size:12px}
   footer b{color:var(--phos)} footer a{color:var(--cyan)}
@@ -241,12 +264,16 @@
   <header>
     <div class="kicker"><span class="dot"></span> GPU EXPLAINER · 真实数据流 <span class="live">● 实测 TRACE</span></div>
     <h1>真实推理里，<br><em>数据怎么在芯片间流动</em></h1>
-    <p class="sub">和原理示意图一样的物理视角——CPU、PCIe、GPU（含 HBM 显存与 SM 阵列）、卡间通信——但这次<b>每一刻点亮什么、数据往哪流，都由真实采集的 trace 驱动</b>（SGLang 跑 DeepSeek-V2-Lite MoE，torch.profiler 导出）。点 ▶ 播放，按真实时序回放这次推理。</p>
+    <p class="sub">和原理示意图一样的物理视角——CPU、PCIe、GPU（含 HBM 显存与 SM 阵列）、卡间通信——但这次<b>每一刻点亮什么、数据往哪流，都由真实采集的 trace 驱动</b>（SGLang 跑 DeepSeek-V2-Lite MoE，torch.profiler 导出）。「讲解模式」逐步看原理；切到「回放模式」点 ▶，按真实时序逐桶回放这次推理。</p>
   </header>
 
   <div class="console">
     <div class="dsbox">数据集
       <select id="dataset"></select>
+    </div>
+    <div class="modeseg" id="modeseg" title="讲解模式：逐步翻页看原理；回放模式：按真实时序连续回放 trace">
+      <button id="mode-guide" class="on">讲解模式</button>
+      <button id="mode-replay">回放模式</button>
     </div>
     <div class="navgrp">
       <button class="btn ghost" id="prev">◀ 上一步</button>
@@ -311,10 +338,36 @@
       <span><i class="sw dot" style="background:var(--violet)"></i> 卡间通信 All-Reduce</span>
       <span style="color:var(--dim)">明暗 = 真实繁忙度</span>
     </div>
+    <div class="measbadge" title="实测：时间轴/各 kernel 耗时/通信时序（torch.profiler）、SM 与 HBM 整段平均活跃率（DCGM）。示意：SM 点亮的具体格子、逐子步 HBM 带宽强度、专家格选择（trace 无专家 id）。"><b>实测</b> trace · <i>示意</i> 细节</div>
+  </div>
+
+  <!-- mini 时间轴：160 桶 × 4 泳道真实回放 -->
+  <div class="mtl" id="mtl">
+    <div class="mtl-head">
+      <span>真实时间轴 · <span id="mtl-nb">0</span> 桶 × 1.3ms</span>
+      <span class="mtl-t">t = <b id="mtl-clock">0.0</b> ms</span>
+    </div>
+    <div class="mtl-body" id="mtl-body">
+      <canvas id="mtl-canvas"></canvas>
+      <div class="mtl-ph" id="mtl-ph"></div>
+    </div>
+    <div class="mtl-leg">
+      <span><i style="background:var(--amber)"></i> CPU</span>
+      <span><i style="background:var(--cyan)"></i> PCIe</span>
+      <span><i style="background:var(--phos)"></i> GPU</span>
+      <span><i style="background:var(--violet)"></i> 卡间通信</span>
+      <span style="margin-left:auto">点击 / 拖动白线 seek</span>
+    </div>
   </div>
 
   <!-- 实时读数：横向仪表条，紧贴动画下方（填补空白、更易扫读） -->
   <div class="hud" id="hud"></div>
+
+  <!-- CPU 下发 / GPU 执行 overlap 微舞台 -->
+  <div class="ovl" id="ovl">
+    <div class="ovl-head"><span>CPU 下发 kernel ↔ GPU 消费队列（示意 · 节奏随 trace）</span><span>实测 CPU 侧占 <b>49.4%</b> · launch-bound</span></div>
+    <svg id="ovl-svg" viewBox="0 0 860 110" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
   </div><!-- /.boardcol -->
 
   <!-- 右侧：当前步骤说明（与动画同屏） -->
@@ -377,6 +430,10 @@
 
 <script src="../nav.js" data-base=".." data-active="realtrace"></script>
 <script src="datasets.js"></script>
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/ScrollTrigger.min.js"></script>
+<script src="vendor/MotionPathPlugin.min.js"></script>
+<script src="gx.js"></script>
 <script>
 // 把任何运行时错误显示到页面顶部（不用开 F12）
 window.addEventListener('error',function(e){
@@ -398,6 +455,9 @@ function buildView(D){
 function _buildView(D){
   if(_activeCleanup){_activeCleanup();_activeCleanup=null;}
   if(!D){ document.getElementById('board').innerHTML='<div class="err">数据集为空或加载失败。</div>'; return; }
+  // 本视图所有事件监听统一挂 signal，切数据集时一键 abort
+  const _ac=new AbortController(), SIG=_ac.signal;
+  const GXRED = !!(window.GX && GX.reduced());
   const NS="http://www.w3.org/2000/svg";
   const mk=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
   // 切换数据集时先清空上一份渲染
@@ -413,7 +473,7 @@ function _buildView(D){
   const gpusG=document.getElementById('gpus');
   const GPOS=[{x:300,y:60,id:0},{x:760,y:60,id:1}];
   const GW=400,GH=300;
-  const gpuBox=[],smCells=[],hbmCells=[];
+  const gpuBox=[],smCells=[],hbmCells=[],expertCells=[],expertFlow=[],expertGrp=[],moeSeg=[];
   GPOS.forEach(p=>{
     const ox=p.x,oy=p.y;
     const box=mk('rect',{class:'gpubox',x:ox,y:oy,width:GW,height:GH,rx:10});gpusG.appendChild(box);gpuBox[p.id]=box;
@@ -436,7 +496,12 @@ function _buildView(D){
           const seg=mk('rect',{class:'hbmcell wseg',x:xx,y:y0,width:w,height:barH,rx:2,
             fill:WC[part.key]||'#b78cff','data-key':part.key});
           seg.style.opacity='0.85';
+          seg.appendChild(Object.assign(mk('title',{}),{textContent:`${part.label} · ${part.per_gpu_gb} GB/卡 · ${part.pct}%（实测推导）`}));
+          // hover ↔ 右侧权重卡片双向高亮
+          seg.addEventListener('pointerenter',()=>{document.querySelectorAll(`.wrow[data-key="${part.key}"]`).forEach(r=>r.classList.add('hot'));},{signal:SIG});
+          seg.addEventListener('pointerleave',()=>{document.querySelectorAll(`.wrow[data-key="${part.key}"]`).forEach(r=>r.classList.remove('hot'));},{signal:SIG});
           gpusG.appendChild(seg);hbmCells[p.id].push(seg);
+          if(part.key==='moe_experts') moeSeg[p.id]={x:xx,w,y:y0+barH};
           // 占比大的段内标注
           if(part.pct>=8){
             gpusG.appendChild(Object.assign(mk('text',{x:xx+w/2,y:y0+15,'text-anchor':'middle',
@@ -453,11 +518,34 @@ function _buildView(D){
     // SM 阵列 10x4
     gpusG.appendChild(Object.assign(mk('text',{class:'sublabel',x:ox+14,y:oy+102,'font-size':8,style:'fill:var(--phos)'}),{textContent:'SM 阵列（流多处理器）'}));
     smCells[p.id]=[];
-    {const w=32,h=20,gx=5,gy=6,x0=ox+14,y0=oy+112; for(let r=0;r<4;r++)for(let c=0;c<10;c++){const e=mk('rect',{class:'smcell',x:x0+c*(w+gx),y:y0+r*(h+gy),width:w,height:h,rx:2});gpusG.appendChild(e);smCells[p.id].push(e);}}
+    {const w=32,h=20,gx=5,gy=6,x0=ox+14,y0=oy+112; for(let r=0;r<4;r++)for(let c=0;c<10;c++){const e=mk('rect',{class:'smcell',x:x0+c*(w+gx),y:y0+r*(h+gy),width:w,height:h,rx:2});e.appendChild(Object.assign(mk('title',{}),{textContent:'SM 点亮比例基于实测繁忙度；具体点亮哪块为示意（硬件不暴露物理 SM 调度）'}));gpusG.appendChild(e);smCells[p.id].push(e);}}
+    // MoE 专家 8×8 小格阵（仅 MoE 子步/阶段显示；专家 id 为示意）
+    {
+      const grp=mk('g',{opacity:0,style:'transition:opacity .25s;pointer-events:none'});
+      const px0=ox+248, py0=oy+120, cw=14, ch=9, cgx=2, cgy=2;
+      grp.appendChild(mk('rect',{x:px0-10,y:py0-18,width:8*(cw+cgx)-cgx+20,height:8*(ch+cgy)-cgy+28,rx:6,fill:'rgba(13,20,19,.93)',stroke:'var(--pink)','stroke-width':1,'stroke-opacity':.45}));
+      grp.appendChild(Object.assign(mk('text',{x:px0,y:py0-6,'font-size':8,class:'lbl',style:'fill:var(--pink)'}),{textContent:'64 个 MoE 专家'}));
+      grp.appendChild(Object.assign(mk('text',{x:px0+8*(cw+cgx)-cgx,y:py0-6,'text-anchor':'end','font-size':7,class:'lbl',style:'fill:var(--dim)'}),{textContent:'示意'}));
+      expertCells[p.id]=[];
+      for(let r=0;r<8;r++)for(let c=0;c<8;c++){
+        const e=mk('rect',{class:'expcell',x:px0+c*(cw+cgx),y:py0+r*(ch+cgy),width:cw,height:ch,rx:1.5});
+        grp.appendChild(e);expertCells[p.id].push(e);
+      }
+      // HBM moe_experts 段 → 专家阵 读权重流线
+      const ms=moeSeg[p.id];
+      if(ms){
+        const fx=Math.min(ms.x+ms.w*0.5, px0+40);
+        const fl=mk('path',{class:'expflow',d:`M ${fx} ${ms.y} C ${fx} ${ms.y+30}, ${px0-30} ${py0-40}, ${px0-6} ${py0+20}`});
+        grp.appendChild(fl);expertFlow[p.id]=fl;
+      }
+      gpusG.appendChild(grp);expertGrp[p.id]=grp;
+    }
     // HBM 显存带宽用量条（实测 DRAM 活跃率；与上方 SM 算力互补）
     gpusG.appendChild(Object.assign(mk('text',{class:'sublabel',x:ox+14,y:oy+GH-28,'font-size':8,style:'fill:var(--violet)'}),
       {textContent:'HBM 带宽用量（示意）'}));
-    gpusG.appendChild(mk('rect',{class:'barbg',x:ox+96,y:oy+GH-36,width:GW-160,height:9,rx:3}));
+    const bbg=mk('rect',{class:'barbg',x:ox+96,y:oy+GH-36,width:GW-160,height:9,rx:3});
+    bbg.appendChild(Object.assign(mk('title',{}),{textContent:'HBM 带宽逐子步强度为示意；整段平均活跃率为 DCGM 实测（见下方卡片）'}));
+    gpusG.appendChild(bbg);
     const bf=mk('rect',{class:'barfill',id:'bar-gpu'+p.id,x:ox+96,y:oy+GH-36,width:0,height:9,rx:3,fill:'var(--violet)'});gpusG.appendChild(bf);
     gpusG.appendChild(Object.assign(mk('text',{id:'bar-gpu-val'+p.id,x:ox+GW-50,y:oy+GH-28,'font-size':9,'font-family':'Space Mono',style:'fill:var(--violet)'}),{textContent:'0%'}));
   });
@@ -598,27 +686,78 @@ function _buildView(D){
   function subCount(ph){ return (ph && ph.macro==='kernel') ? (ph.has_moe?SUBSTEPS.length:4) : 0; }
   // 每个子步的 HBM 带宽相对强度（0~1，示意）。读权重的步(QKV/专家)最吃带宽。
   // 注：DCGM 只测了整段平均(峰值)，子步级强度为示意，Prefill/Decode 不做无依据的高低区分。
-  function hbwOf(idx, isDecode){
+  function hbwOf(idx){
     // ①归一 ②QKV ③注意力 ④输出+AR ⑤归一 ⑥路由 ⑦专家 ⑧输出+AR
     const a =[0.3, 0.7, 0.8, 0.5, 0.3, 0.4, 0.95, 0.55];
     return a[Math.max(0,Math.min(a.length-1,idx))];
   }
+  let _pipeIdx=-2,_pipeCnt=-1;
   function drivePipeline(ph, idx){
     const count = subCount(ph);
     const on = count>0 && idx>=0;
     pipeDot.setAttribute('opacity', on?1:0);
-    pipeNodes.forEach((n,i)=>{
-      const active = i===idx;
-      n.circle.setAttribute('fill', active? SUBCOL[i] : '#0f1614');
-      n.circle.setAttribute('r', active? 16 : 13);
-      n.circle.style.filter = active? `drop-shadow(0 0 8px ${SUBCOL[i]})` : 'none';
-      n.circle.style.opacity = (count>0 && i<count)?1:0.25;
-    });
-    if(on){ pipeDot.setAttribute('cx', pipeNodes[idx].x); pipeDot.setAttribute('cy', PIPE_Y); }
-    // 同步高亮右侧流水行
-    document.querySelectorAll('.flowrow').forEach((r,i)=>r.classList.toggle('flow-active', on && i===idx));
+    const dirty = idx!==_pipeIdx || count!==_pipeCnt;
+    if(on && dirty){
+      // 光点插值滑动（reduced-motion 时直接落位）
+      if(window.gsap && !(window.GX&&GX.reduced())){
+        gsap.to(pipeDot,{attr:{cx:pipeNodes[idx].x,cy:PIPE_Y},duration:.4,ease:'power2.out',overwrite:true});
+      }else{
+        pipeDot.setAttribute('cx',pipeNodes[idx].x);pipeDot.setAttribute('cy',PIPE_Y);
+      }
+    }
+    if(dirty){
+      pipeNodes.forEach((n,i)=>{
+        const active = i===idx;
+        n.circle.setAttribute('fill', active? SUBCOL[i] : '#0f1614');
+        n.circle.setAttribute('r', active? 16 : 13);
+        n.circle.style.filter = active? `drop-shadow(0 0 8px ${SUBCOL[i]})` : 'none';
+        n.circle.style.opacity = (count>0 && i<count)?1:0.25;
+      });
+      _pipeIdx=idx;_pipeCnt=count;
+    }
     return {idx, sub: on?SUBSTEPS[idx]:{sm:0,hbm:'attention',comm:false,pink:false}};
   }
+
+  // ---------- MoE 专家稀疏激活（示意：数据无专家 id，用桶号种子稳定伪随机选格） ----------
+  function seededPick(seed,count,total){
+    // 必须用 Math.imul:普通乘法在 s 接近 2^32 时超出浮点安全整数,低位丢失,
+    // s%total 会陷入短循环,while 永远凑不满 count → 页面死循环冻结
+    let s=(Math.imul(seed,2654435761))>>>0; const picked=new Set();
+    let guard=0;
+    while(picked.size<count && ++guard<10000){ s=(Math.imul(s,1103515245)+12345)>>>0; picked.add(s%total); }
+    return picked;
+  }
+  let _expState='';
+  function driveExperts(bi, moeOn, isDecode){
+    const key=moeOn?(isDecode?'d':'p')+bi:'off';
+    if(key===_expState)return; _expState=key;
+    [0,1].forEach(g=>{
+      const grp=expertGrp[g]; if(!grp)return;
+      grp.setAttribute('opacity',moeOn?1:0);
+      if(expertFlow[g])expertFlow[g].classList.toggle('on',moeOn);
+      if(!moeOn)return;
+      // Prefill：token 多 → 几乎全亮（~56/64）；Decode：单 token → 仅 top-6
+      const n=isDecode?6:56;
+      const on=seededPick(bi*2+g+1,n,64);
+      expertCells[g].forEach((c,i)=>c.classList.toggle('on',on.has(i)));
+    });
+  }
+
+  // ---------- HUD：一次建 cell，之后只改 textContent/width ----------
+  const HUD=(function(){
+    const host=document.getElementById('hud');
+    host.innerHTML=
+      `<div class="cell amber"><span class="ck">时间</span><span class="cv"><span id="hud-t">0.0</span><small>ms</small></span><span class="ck" style="color:var(--dim);text-transform:none;letter-spacing:0">/ ${TOTAL.toFixed(0)} ms</span></div>
+       <div class="cell amber"><span class="ck">CPU 繁忙度</span><span class="cv"><span id="hud-cpu">0</span><small>%</small></span><div class="gauge"><i id="hud-cpu-g" style="background:var(--amber)"></i></div></div>
+       <div class="cell phos"><span class="ck">GPU 繁忙度</span><span class="cv"><span id="hud-gpu">0</span><small>%</small></span><div class="gauge"><i id="hud-gpu-g" style="background:var(--phos)"></i></div></div>
+       <div class="cell cyan"><span class="ck">PCIe 搬运</span><span class="cv" id="hud-pcie" style="display:inline-block;min-width:4.5em">—</span><div class="gauge"><i id="hud-pcie-g" style="background:var(--cyan)"></i></div></div>
+       <div class="cell violet"><span class="ck">卡间通信</span><span class="cv" id="hud-comm" style="display:inline-block;min-width:4.5em">—</span><div class="gauge"><i id="hud-comm-g" style="background:var(--violet)"></i></div></div>
+       <div class="cell phos"><span class="ck">GPU 在算</span><span class="cv" id="hud-op" style="font-size:14px;line-height:1.25">空闲</span></div>`;
+    const $=id=>document.getElementById(id);
+    return {t:$('hud-t'),cpu:$('hud-cpu'),cpuG:$('hud-cpu-g'),gpu:$('hud-gpu'),gpuG:$('hud-gpu-g'),
+      pcie:$('hud-pcie'),pcieG:$('hud-pcie-g'),comm:$('hud-comm'),commG:$('hud-comm-g'),op:$('hud-op')};
+  })();
+  function setW(el,frac){el.style.width=Math.min(100,frac*100).toFixed(0)+'%';}
 
   // ---------- 渲染某一时刻（桶 index） ----------
   function lightFraction(cells,frac,cls){const n=Math.round(cells.length*frac);cells.forEach((c,i)=>{c.classList.remove('busy','moe');if(i<n)c.classList.add(cls);});}
@@ -644,7 +783,7 @@ function _buildView(D){
     // HBM 带宽用量：实测 DRAM 活跃率为峰值，按子步性质调制
     const dramPeak=(D.meta&&D.meta.dcgm)?(D.meta.dcgm.dram_active_pct/100):0.58;
     const isDecode = ph && ph.group==='decode';
-    const hbwFrac = onSub ? hbwOf(sub.idx, isDecode)*dramPeak : gpuV*dramPeak*0.7;
+    const hbwFrac = onSub ? hbwOf(sub.idx)*dramPeak : gpuV*dramPeak*0.7;
     const barW=GW-160;
     [0,1].forEach(g=>{
       gpuBox[g].classList.toggle('on',gpuV>0.05);
@@ -665,28 +804,43 @@ function _buildView(D){
     nvEl.classList.toggle('act',commActive);
     // 数据包
     drawPackets(pcieV, commActive?Math.max(commV,0.3):0);
-    // 读数（横向仪表条）
+    // MoE 专家稀疏激活（子步为 MoE、或回放到 gpu_top=moe_expert 的桶时显示）
+    driveExperts(Math.max(0,Math.min(NB-1,Math.floor(bi))), moe && gpuV>0.05, isDecode);
+    // 读数（横向仪表条：只更新文本/宽度）
     document.getElementById('clock').textContent=b.t.toFixed(1);
-    const gauge=(v,col)=>`<div class="gauge"><i style="width:${Math.min(100,v*100).toFixed(0)}%;background:${col}"></i></div>`;
-    const pct=v=>`${(v*100).toFixed(0)}<small>%</small>`;
-    document.getElementById('hud').innerHTML=
-      `<div class="cell amber"><span class="ck">时间</span><span class="cv">${b.t.toFixed(1)}<small>ms</small></span><span class="ck" style="color:var(--dim);text-transform:none;letter-spacing:0">/ ${TOTAL.toFixed(0)} ms</span></div>
-       <div class="cell amber"><span class="ck">CPU 繁忙度</span><span class="cv">${pct(cpuV)}</span>${gauge(cpuV,'var(--amber)')}</div>
-       <div class="cell phos"><span class="ck">GPU 繁忙度</span><span class="cv">${pct(gpuV)}</span>${gauge(gpuV,'var(--phos)')}</div>
-       <div class="cell cyan"><span class="ck">PCIe 搬运</span><span class="cv">${pcieV>0.01?'● <small>活跃</small>':'—'}</span>${gauge(pcieV>0.01?1:0,'var(--cyan)')}</div>
-       <div class="cell violet"><span class="ck">卡间通信</span><span class="cv">${commActive?pct(Math.max(commV,0.1)):'—'}</span>${gauge(commActive?Math.max(commV,0.1):0,'var(--violet)')}</div>
-       <div class="cell phos"><span class="ck">GPU 在算</span><span class="cv" style="font-size:14px;line-height:1.25">${onSub?SUBSTEPS[sub.idx].name.replace(/\s*\(.*\)/,''):((isKernel&&gpuV>0.05)?(KIND_CN[b.gpu_top]||'空闲'):'空闲')}</span></div>`;
+    HUD.t.textContent=b.t.toFixed(1);
+    HUD.cpu.textContent=(cpuV*100).toFixed(0); setW(HUD.cpuG,cpuV);
+    HUD.gpu.textContent=(gpuV*100).toFixed(0); setW(HUD.gpuG,gpuV);
+    HUD.pcie.innerHTML=pcieV>0.01?'● <small>活跃</small>':'—'; setW(HUD.pcieG,pcieV>0.01?1:0);
+    HUD.comm.innerHTML=commActive?`${(Math.max(commV,0.1)*100).toFixed(0)}<small>%</small>`:'—'; setW(HUD.commG,commActive?Math.max(commV,0.1):0);
+    HUD.op.textContent=onSub?SUBSTEPS[sub.idx].name.replace(/\s*\(.*\)/,''):((gpuV>0.05)?(KIND_CN[b.gpu_top]||'空闲'):'空闲');
+    // mini 时间轴 playhead + 时钟
+    MTL.update(bi,b.t);
+    // overlap 微舞台节奏与当前桶联动
+    OVL.setRates(cpuV,gpuV);
   }
+  // 数据包：固定 circle 池（2×PCIe + 2×NCCL），每帧只改 cx/cy/可见性
+  const pktPool={
+    pcie:PCIE.map(()=>{const c=mk('circle',{r:5,fill:'var(--cyan)',opacity:0,style:'filter:drop-shadow(0 0 4px #39d0ff)'});packetsG.appendChild(c);return c;}),
+    comm:[0,1].map(()=>{const c=mk('circle',{r:6,cy:210,fill:'var(--violet)',opacity:0,style:'filter:drop-shadow(0 0 5px #b78cff)'});packetsG.appendChild(c);return c;})
+  };
+  let pktActive=false;   // 有包在流动 → 空闲循环也要逐帧重绘
   function drawPackets(pcieV,commV){
-    while(packetsG.firstChild)packetsG.removeChild(packetsG.firstChild);
-    // PCIe 包（CPU→GPU），数量随繁忙度
-    if(pcieV>0.01){PCIE.forEach(e=>{const x=e.x1+(e.x2-e.x1)*pktPhase,y=e.y1+(e.y2-e.y1)*pktPhase;
-      packetsG.appendChild(mk('circle',{cx:x,cy:y,r:5,fill:'var(--cyan)',style:'filter:drop-shadow(0 0 4px #39d0ff)'}));});}
+    pktActive = pcieV>0.01 || commV>0.03;
+    // PCIe 包（CPU→GPU）
+    PCIE.forEach((e,i)=>{const c=pktPool.pcie[i];
+      if(pcieV>0.01){c.setAttribute('opacity',1);
+        c.setAttribute('cx',(e.x1+(e.x2-e.x1)*pktPhase).toFixed(1));
+        c.setAttribute('cy',(e.y1+(e.y2-e.y1)*pktPhase).toFixed(1));
+      }else c.setAttribute('opacity',0);});
     // NCCL 包（GPU↔GPU 双向）
-    if(commV>0.03){const e=NVLINE; const x=e.x1+(e.x2-e.x1)*pktPhase;
-      packetsG.appendChild(mk('circle',{cx:x,cy:210,r:6,fill:'var(--violet)',style:'filter:drop-shadow(0 0 5px #b78cff)'}));
-      const x2=e.x2-(e.x2-e.x1)*pktPhase;
-      packetsG.appendChild(mk('circle',{cx:x2,cy:210,r:6,fill:'var(--violet)',style:'filter:drop-shadow(0 0 5px #b78cff)'}));}
+    const e=NVLINE, on=commV>0.03;
+    pktPool.comm[0].setAttribute('opacity',on?1:0);
+    pktPool.comm[1].setAttribute('opacity',on?1:0);
+    if(on){
+      pktPool.comm[0].setAttribute('cx',(e.x1+(e.x2-e.x1)*pktPhase).toFixed(1));
+      pktPool.comm[1].setAttribute('cx',(e.x2-(e.x2-e.x1)*pktPhase).toFixed(1));
+    }
   }
 
   // ---------- 阶段步骤（按 token 组分层显示） ----------
@@ -709,7 +863,7 @@ function _buildView(D){
     if(p.has_moe)extra+=' <span class="moe">·MoE</span>';
     if(p.has_comm)extra+=' <span class="cm">·通信</span>';
     el.innerHTML=`<span class="num">${i+1}</span><span class="lab">${SHORT[p.macro]||p.macro}${extra}</span><span class="ms">${p.ms.toFixed(0)}ms</span>`;
-    el.addEventListener('click',()=>gotoStep(i));
+    el.addEventListener('click',()=>{setMode('guide');gotoStep(i,'first');},{signal:SIG});
     stepsBox.appendChild(el);
     stepEls.push(el);
   });
@@ -729,6 +883,12 @@ function _buildView(D){
       `<div class="wsum">TP=${W.tp} 切分 · 每卡推导 <b>${W.per_gpu_gb} GB</b>`+
       (W.measured_per_gpu_gb?` · 实测 ${W.measured_per_gpu_gb} GB`:'')+
       `<br>${W.params_b}B 参数 · ${W.dtype} · <b>MoE 专家占 ${(W.parts.find(x=>x.key==='moe_experts')||{}).pct}%</b></div>`;
+    // wrow hover → SVG HBM 权重段发亮（双向联动）
+    list.querySelectorAll('.wrow').forEach(r=>{
+      const k=r.getAttribute('data-key');
+      r.addEventListener('pointerenter',()=>{document.querySelectorAll(`.hbmcell.wseg[data-key="${k}"]`).forEach(s=>{s.style.filter='brightness(1.5) drop-shadow(0 0 4px currentColor)';s.style.opacity='1';});},{signal:SIG});
+      r.addEventListener('pointerleave',()=>{document.querySelectorAll(`.hbmcell.wseg[data-key="${k}"]`).forEach(s=>{s.style.filter='';s.style.opacity='0.85';});},{signal:SIG});
+    });
   })();
 
   // ---------- DCGM 实测利用率卡片 ----------
@@ -746,8 +906,18 @@ function _buildView(D){
       `卡间 NVLink：${G.nvlink_active?'有流量':'无（A10G 走 PCIe，非 NVLink）'}</div>`;
   })();
 
-  // ---------- 播放引擎（在当前阶段内推进游标；可单步/自动） ----------
+  // ---------- 播放引擎（讲解模式：按步；回放模式：按真实时序推进桶游标） ----------
   let curStep=0, subStep=-1, playing=false, raf=null, lastTs=null, biPos=0, speed=1, pktPhase=0;
+  let mode='guide';                          // 'guide' 讲解 | 'replay' 回放
+  const msPerBucket = NB>1 ? TOTAL/NB : 1.3; // ≈1.3ms/桶
+  const REPLAY_SLOW = 80;                    // 回放 1× = 真实时间放慢 80 倍（整段 ≈17s）
+  // 桶号 → 所属 phase 索引
+  function phaseOfBucket(bi){
+    for(let i=0;i<PH.length;i++){ if(bi>=PH[i].b0 && bi<=PH[i].b1) return i; }
+    let best=0;                              // 桶不在任何段内 → 取最近的段
+    for(let i=0;i<PH.length;i++){ if(PH[i].b0<=bi) best=i; else break; }
+    return best;
+  }
   function applyStepText(i){
     const p=PH[i];
     // 按阶段切换子步集（Prefill / Decode），并更新管线节点标签
@@ -803,7 +973,8 @@ function _buildView(D){
     if(n>0){
       // GPU 计算步：显示流水轨（8/4 个节点）+ 当前子步详解 + 可展开真实统计
       rail.style.display='flex';
-      ssCard.style.display='block';
+      // 回放模式不进子步 → 不显示子步详解卡（避免陈旧内容）
+      ssCard.style.display=(mode==='replay')?'none':'block';
       hostNote.style.display='none';
       rail.innerHTML=SUBSTEPS.slice(0,n).map((s,i)=>{
         const col=SUBCOL[i];
@@ -856,9 +1027,10 @@ function _buildView(D){
     const atEnd = curStep>=lastPhase && (n===0 || subStep>=n-1);
     document.getElementById('prev').disabled=atStart;
     document.getElementById('next').disabled=atEnd;
-    // 总进度：按「步 + 子步」细粒度推进
-    const sub=(n>0&&subStep>=0)?(subStep+1)/n:(curStep<lastPhase?0:1);
-    const frac=PH.length>1?(curStep+ (n>0?(subStep+1)/n:1))/PH.length:1;
+    // 总进度：回放模式按真实时间，讲解模式按「步 + 子步」
+    const frac = mode==='replay'
+      ? (NB>1 ? biPos/(NB-1) : 1)
+      : (PH.length>1?(curStep+ (n>0?(subStep+1)/n:1))/PH.length:1);
     const pe=document.getElementById('prog');if(pe)pe.style.width=(Math.min(1,frac)*100).toFixed(1)+'%';
   }
   function stepNext(){
@@ -891,56 +1063,215 @@ function _buildView(D){
       document.getElementById('d-title').textContent=`第 ${curStep+1} 步 · ${p.title}`;
     }
   }
-  document.getElementById('next').addEventListener('click',stepNext);
-  document.getElementById('prev').addEventListener('click',stepPrev);
-  // 键盘导航：← → 翻步，空格播放/暂停（输入框聚焦时不拦截）
+  document.getElementById('next').addEventListener('click',stepNext,{signal:SIG});
+  document.getElementById('prev').addEventListener('click',stepPrev,{signal:SIG});
+  // 键盘导航：← → 翻步（讲解模式）/ seek（回放模式），空格播放/暂停
   function onKey(e){
     if(/INPUT|SELECT|TEXTAREA/.test((e.target&&e.target.tagName)||''))return;
-    if(e.key==='ArrowRight'){e.preventDefault();stepNext();}
-    else if(e.key==='ArrowLeft'){e.preventDefault();stepPrev();}
+    if(e.key==='ArrowRight'){e.preventDefault();if(mode==='guide')stepNext();else{biPos=Math.min(NB-1,biPos+2);syncReplayPhase();requestRender();}}
+    else if(e.key==='ArrowLeft'){e.preventDefault();if(mode==='guide')stepPrev();else{biPos=Math.max(0,biPos-2);syncReplayPhase();requestRender();}}
     else if(e.key===' '){e.preventDefault();document.getElementById('play').click();}
   }
-  document.addEventListener('keydown',onKey);
-  // 自动播放：按子步推进（每子步停留一小段）
-  let autoAcc=0;
-  function frame(ts){if(!lastTs)lastTs=ts;const dt=(ts-lastTs)/1000;lastTs=ts;
-    pktPhase=(pktPhase+dt*0.5)%1;
-    autoAcc+=dt*speed;
-    if(autoAcc>=0.7){               // 每 0.7s/speed 前进一子步
-      autoAcc=0;
-      const n=subCount(PH[curStep]);
-      const atEnd = curStep>=PH.length-1 && (n===0 || subStep>=n-1);
-      if(atEnd){ playing=false; document.getElementById('play').textContent='⏵ 重新播放'; updateNav(); return; }
-      stepNext();
-    }
-    render(biPos);
-    if(playing)raf=requestAnimationFrame(frame);
-  }
-  document.getElementById('play').addEventListener('click',()=>{
-    if(playing){playing=false;cancelAnimationFrame(raf);document.getElementById('play').textContent='⏵ 自动播放';return;}
-    // 已在末尾则从头(firstReal)重播
-    const n=subCount(PH[curStep]);
-    if(curStep>=PH.length-1 && (n===0||subStep>=n-1)) gotoStep(firstReal,'first');
-    playing=true;lastTs=null;autoAcc=0;document.getElementById('play').textContent='⏸ 暂停';raf=requestAnimationFrame(frame);
-  });
-  document.getElementById('reset').addEventListener('click',()=>{gotoStep(firstReal,'first');updateSubText();});
-  const sp=document.getElementById('speed'),spv=document.getElementById('speedv');
-  sp.addEventListener('input',()=>{speed=parseFloat(sp.value);spv.textContent=speed.toFixed(1)+'×';});
-  // 时间轴点击 → 跳到对应阶段
-
-  // 数据包持续流动（即使定格在某步）：独立动画循环只更新包位置
-  let pktRaf=null, pktLast=null, stopped=false;
-  function pktTick(ts){if(stopped)return;if(!pktLast)pktLast=ts;const dt=(ts-pktLast)/1000;pktLast=ts;
-    // 流水演示用较慢的相位（每 ~3.2s 走完一层 8 步），与数据包流动区分
+  document.addEventListener('keydown',onKey,{signal:SIG});
+  // ---------- 单一 rAF 循环状态机 ----------
+  // idle：只推包相位，脏时重绘；guide-play：按子步节拍推进；replay-play：biPos 按真实时序连续推进
+  let autoAcc=0, stopped=false, needRender=true;
+  const playBtn=document.getElementById('play');
+  function requestRender(){needRender=true;}
+  function loop(ts){
+    if(stopped)return;
+    if(!lastTs)lastTs=ts; const dt=Math.min(0.1,(ts-lastTs)/1000); lastTs=ts;
     pktPhase=(pktPhase+dt*0.31)%1;
-    if(!playing){
-      // 定格在某步时，仍持续驱动层流水动画
-      render(Math.floor(biPos));
+    if(playing && mode==='replay'){
+      // 回放：真实时间连续推进（1× = 1/80 实速）
+      biPos += dt*1000*speed/REPLAY_SLOW/msPerBucket;
+      if(biPos>=NB-1){ biPos=NB-1; setPlaying(false); playBtn.textContent='⏵ 重新播放'; }
+      syncReplayPhase();
+      updateNav();          // 回放模式进度条按真实时间连续推进
+      needRender=true;
+    }else if(playing && mode==='guide'){
+      autoAcc+=dt*speed;
+      if(autoAcc>=0.7){               // 每 0.7s/speed 前进一子步
+        autoAcc=0;
+        const n=subCount(PH[curStep]);
+        const atEnd = curStep>=PH.length-1 && (n===0 || subStep>=n-1);
+        if(atEnd){ setPlaying(false); playBtn.textContent='⏵ 重新播放'; updateNav(); }
+        else stepNext();
+      }
     }
-    pktRaf=requestAnimationFrame(pktTick);}
-  pktRaf=requestAnimationFrame(pktTick);
+    // 脏检查：状态变了，或有包在流动（链路活跃）才重绘
+    if(needRender || pktActive){ render(mode==='replay'?Math.floor(biPos):biPos); needRender=false; }
+    OVL.tick(dt);   // overlap 微舞台持续演示
+    raf=requestAnimationFrame(loop);
+  }
+  raf=requestAnimationFrame(loop);
+  function setPlaying(v){
+    playing=v;
+    playBtn.textContent=v?'⏸ 暂停':'⏵ 自动播放';
+  }
+  // 回放推进时同步 phase 高亮/文案（不进子步）
+  let _lastReplayPhase=-1;
+  function syncReplayPhase(){
+    const pi=phaseOfBucket(Math.floor(biPos));
+    if(pi!==_lastReplayPhase){
+      _lastReplayPhase=pi; curStep=pi; subStep=-1;
+      applyStepText(pi); updateSubText(); updateNav();
+    }
+  }
+  // ---------- 模式切换 ----------
+  const mgBtn=document.getElementById('mode-guide'), mrBtn=document.getElementById('mode-replay');
+  function setMode(m){
+    if(m===mode)return;
+    mode=m; setPlaying(false);
+    mgBtn.classList.toggle('on',m==='guide');
+    mrBtn.classList.toggle('on',m==='replay');
+    const isG=m==='guide';
+    document.getElementById('prev').style.display=isG?'':'none';
+    document.getElementById('next').style.display=isG?'':'none';
+    if(!isG){ subStep=-1; _lastReplayPhase=-1; syncReplayPhase(); }
+    else gotoStep(phaseOfBucket(Math.floor(biPos)),'first');
+    updateNav(); requestRender();
+  }
+  mgBtn.addEventListener('click',()=>setMode('guide'),{signal:SIG});
+  mrBtn.addEventListener('click',()=>setMode('replay'),{signal:SIG});
+  playBtn.addEventListener('click',()=>{
+    if(playing){ setPlaying(false); return; }
+    if(mode==='replay'){
+      if(biPos>=NB-1) biPos=PH[firstReal]?PH[firstReal].b0:0;   // 跳过预热噪声
+      _lastReplayPhase=-1; syncReplayPhase();
+    }else{
+      const n=subCount(PH[curStep]);
+      if(curStep>=PH.length-1 && (n===0||subStep>=n-1)) gotoStep(firstReal,'first');
+    }
+    lastTs=null; autoAcc=0; setPlaying(true);
+  },{signal:SIG});
+  document.getElementById('reset').addEventListener('click',()=>{
+    setPlaying(false);
+    if(mode==='replay'){ biPos=PH[firstReal]?PH[firstReal].b0:0; _lastReplayPhase=-1; syncReplayPhase(); updateNav(); requestRender(); }
+    else { gotoStep(firstReal,'first'); updateSubText(); }
+  },{signal:SIG});
+  const sp=document.getElementById('speed'),spv=document.getElementById('speedv');
+  sp.addEventListener('input',()=>{speed=parseFloat(sp.value);spv.textContent=speed.toFixed(1)+'×';},{signal:SIG});
 
-  // ---------- 结论卡片注释 ----------
+  // ---------- mini 时间轴：canvas 一次画 160 桶 × 4 泳道 + phase 标记 + 可拖 playhead ----------
+  const MTL=(function(){
+    const body=document.getElementById('mtl-body');
+    const cv=document.getElementById('mtl-canvas');
+    const ph=document.getElementById('mtl-ph');
+    const clockEl=document.getElementById('mtl-clock');
+    document.getElementById('mtl-nb').textContent=NB;
+    const CSS=getComputedStyle(document.documentElement);
+    const LANES=[
+      {k:'cpu', col:CSS.getPropertyValue('--amber').trim()||'#ffb13d'},
+      {k:'pcie',col:CSS.getPropertyValue('--cyan').trim()||'#39d0ff'},
+      {k:'gpu', col:CSS.getPropertyValue('--phos').trim()||'#3dff9a'},
+      {k:'comm',col:CSS.getPropertyValue('--violet').trim()||'#b78cff'},
+    ];
+    function draw(){
+      const W=body.clientWidth||600, H=96, dpr=window.devicePixelRatio||1;
+      cv.width=W*dpr; cv.height=H*dpr;
+      const ctx=cv.getContext('2d'); ctx.scale(dpr,dpr);
+      ctx.fillStyle='#0a100e'; ctx.fillRect(0,0,W,H);
+      const laneH=(H-14)/4, bw=W/NB;
+      LANES.forEach((ln,li)=>{
+        const y=14+li*laneH;
+        for(let i=0;i<NB;i++){
+          const v=TL[i][ln.k]||0; if(v<=0.005)continue;
+          ctx.globalAlpha=0.12+0.88*Math.min(1,v);   // 亮度 ∝ 数值
+          ctx.fillStyle=ln.col;
+          ctx.fillRect(i*bw, y+1, Math.max(1,bw-0.4), laneH-2);
+        }
+      });
+      ctx.globalAlpha=1;
+      // phase 分段标记
+      ctx.font='9px "Space Mono","PingFang SC",monospace';
+      PH.forEach(p=>{
+        if(p.macro==='gap')return;
+        const x=p.b0*bw;
+        ctx.strokeStyle='rgba(216,230,224,.35)'; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+        ctx.fillStyle='rgba(216,230,224,.7)';
+        ctx.fillText((p.title||'').split('：')[0], x+3, 10);
+      });
+    }
+    draw();
+    let _lastX=-1;
+    function update(bi,t){
+      const W=body.clientWidth||600;
+      const x=Math.round(Math.min(NB-1,Math.max(0,bi))/(NB-1)*W);
+      if(x!==_lastX){ ph.style.transform=`translateX(${x}px)`; _lastX=x; }
+      clockEl.textContent=t.toFixed(1);
+    }
+    // 点击 / 拖动 seek（pointer events）→ 切到回放模式并定位
+    let dragging=false;
+    function seekAt(clientX){
+      const r=body.getBoundingClientRect();
+      const frac=Math.min(1,Math.max(0,(clientX-r.left)/r.width));
+      setMode('replay');
+      biPos=frac*(NB-1);
+      _lastReplayPhase=-1; syncReplayPhase(); requestRender();
+    }
+    body.addEventListener('pointerdown',e=>{dragging=true;body.setPointerCapture(e.pointerId);seekAt(e.clientX);},{signal:SIG});
+    body.addEventListener('pointermove',e=>{if(dragging)seekAt(e.clientX);},{signal:SIG});
+    body.addEventListener('pointerup',()=>{dragging=false;},{signal:SIG});
+    window.addEventListener('resize',()=>{draw();_lastX=-1;},{signal:SIG});
+    return {update};
+  })();
+
+  // ---------- CPU launch / GPU 执行 overlap 微舞台（示意，节奏随当前桶 cpu/gpu 值） ----------
+  const OVL=(function(){
+    const svg=document.getElementById('ovl-svg');
+    while(svg.firstChild)svg.removeChild(svg.firstChild);
+    const W=860, laneY={cpu:22,gpu:82}, QX=560, GPUX=740;
+    // 轨道
+    svg.appendChild(Object.assign(mk('text',{class:'lbl',x:8,y:laneY.cpu+4,style:'fill:var(--amber)'}),{textContent:'CPU 下发'}));
+    svg.appendChild(Object.assign(mk('text',{class:'lbl',x:8,y:laneY.gpu+4,style:'fill:var(--phos)'}),{textContent:'GPU 执行'}));
+    svg.appendChild(mk('line',{x1:80,y1:laneY.cpu,x2:QX-10,y2:laneY.cpu,stroke:'var(--line)','stroke-width':1.5,'stroke-dasharray':'2 4'}));
+    svg.appendChild(mk('line',{x1:QX-10,y1:laneY.gpu,x2:GPUX+90,y2:laneY.gpu,stroke:'var(--line)','stroke-width':1.5}));
+    // 队列框 + GPU 消费框
+    svg.appendChild(mk('rect',{x:QX,y:laneY.gpu-16,width:150,height:32,rx:5,fill:'none',stroke:'var(--line)','stroke-width':1}));
+    svg.appendChild(Object.assign(mk('text',{class:'lbl',x:QX+4,y:laneY.gpu-22,style:'fill:var(--dim)'}),{textContent:'kernel 队列'}));
+    const gpuBoxEl=mk('rect',{x:GPUX,y:laneY.gpu-16,width:90,height:32,rx:5,fill:'#0f1614',stroke:'var(--phos)','stroke-width':1.2});
+    svg.appendChild(gpuBoxEl);
+    const gpuTxt=Object.assign(mk('text',{x:GPUX+45,y:laneY.gpu+4,'text-anchor':'middle','font-size':10,'font-weight':700,fill:'var(--phos)'}),{textContent:'空闲'});
+    svg.appendChild(gpuTxt);
+    const starve=Object.assign(mk('text',{x:QX+75,y:laneY.gpu+4,'text-anchor':'middle','font-size':10,'font-weight':700,fill:'var(--red)',opacity:0}),{textContent:'等待 CPU…'});
+    svg.appendChild(starve);
+    // 飞行方块池
+    const POOL=8, blocks=[];
+    for(let i=0;i<POOL;i++){const b=mk('rect',{width:14,height:10,rx:2,fill:'var(--amber)',opacity:0});svg.appendChild(b);blocks.push({el:b,st:'free',p:0});}
+    // 队列格
+    const QSLOT=6, qEls=[];
+    for(let i=0;i<QSLOT;i++){const q=mk('rect',{x:QX+8+i*23,y:laneY.gpu-8,width:16,height:16,rx:2,fill:'var(--phos)',opacity:0});svg.appendChild(q);qEls.push(q);}
+    let qLen=0, launchAcc=0, consumeAcc=0, cpuRate=1, gpuRate=1;
+    // 节奏与当前桶联动：cpu 值高 → 弹块快；gpu 值高 → 消费快
+    function setRates(cpuV,gpuV){ cpuRate=0.25+cpuV*2.2; gpuRate=0.5+gpuV*2.8; }
+    function tick(dt){
+      if(GXRED)return;
+      // CPU 弹块
+      launchAcc+=dt*cpuRate;
+      if(launchAcc>=0.55){ launchAcc=0;
+        const b=blocks.find(x=>x.st==='free');
+        if(b && qLen<QSLOT){ b.st='fly'; b.p=0; b.el.setAttribute('opacity',1); }
+      }
+      // 飞行插值：CPU 轨 → 弧线落入队列
+      blocks.forEach(b=>{
+        if(b.st!=='fly')return;
+        b.p=Math.min(1,b.p+dt*1.4);
+        const t=b.p, x=80+(QX-80)*t, y=laneY.cpu+(laneY.gpu-laneY.cpu)*(t*t);
+        b.el.setAttribute('x',x.toFixed(1)); b.el.setAttribute('y',(y-5).toFixed(1));
+        if(b.p>=1){ b.st='free'; b.el.setAttribute('opacity',0); if(qLen<QSLOT)qLen++; }
+      });
+      // GPU 消费
+      consumeAcc+=dt*gpuRate;
+      if(consumeAcc>=0.55){ consumeAcc=0; if(qLen>0)qLen--; }
+      qEls.forEach((q,i)=>q.setAttribute('opacity',i<qLen?0.9:0.12));
+      const starving=qLen===0 && gpuRate>cpuRate;
+      starve.setAttribute('opacity',starving?1:0);
+      gpuTxt.textContent=qLen>0?'执行中':'空闲';
+      gpuBoxEl.setAttribute('stroke',qLen>0?'var(--phos)':'var(--line)');
+    }
+    return {setRates,tick};
+  })();
   const moeB=D.breakdown.find(b=>b.kind==='moe_expert');
   const commB=D.breakdown.find(b=>b.kind==='comm_allreduce');
   document.getElementById('d-note').textContent=
@@ -950,12 +1281,10 @@ function _buildView(D){
   const firstReal = (()=>{const i=PH.findIndex(p=>p.macro!=='gap');return i<0?0:i;})();
   gotoStep(firstReal,'first');
 
-  // 注册清理：切换数据集时取消动画循环与事件（事件挂在会被替换的节点上，clone 清除）
+  // 注册清理：切换数据集时取消动画循环，AbortController 一键解绑所有事件
   _activeCleanup=function(){
-    stopped=true; cancelAnimationFrame(raf); cancelAnimationFrame(pktRaf);
-    document.removeEventListener('keydown',onKey);
-    // 清除挂在这些节点上的事件监听（用克隆替换）
-    ['prev','next','play','reset','speed'].forEach(id=>{const el=document.getElementById(id);if(el)el.replaceWith(el.cloneNode(false));});
+    stopped=true; cancelAnimationFrame(raf);
+    _ac.abort();
   };
 }
 
@@ -968,13 +1297,20 @@ function _buildView(D){
   manifest.forEach(d=>{const o=document.createElement('option');o.value=d.id;o.textContent=d.label;sel.appendChild(o);});
 
   window.TRACE_DATASETS = window.TRACE_DATASETS || {};
+  function showLoading(){
+    if(document.getElementById('loadmask'))return;
+    const m=document.createElement('div');m.id='loadmask';m.className='loadmask';m.textContent='LOADING TRACE…';
+    board.appendChild(m);
+  }
+  function hideLoading(){const m=document.getElementById('loadmask');if(m)m.remove();}
   function loadDataset(entry){
     // 已加载过则直接构建
     if(window.TRACE_DATASETS[entry.id]){ buildView(window.TRACE_DATASETS[entry.id]); return; }
+    showLoading();
     const s=document.createElement('script');
     s.src=entry.file;
-    s.onload=()=>{ const D=window.TRACE_DATASETS[entry.id]; if(D)buildView(D); else board.innerHTML='<div class="err">数据文件已加载，但未注册到 TRACE_DATASETS["'+entry.id+'"]。检查 data/'+entry.id+'.js 顶部赋值。</div>'; };
-    s.onerror=()=>{ board.innerHTML='<div class="err">加载失败：'+entry.file+'（确认文件存在）。</div>'; };
+    s.onload=()=>{ hideLoading(); const D=window.TRACE_DATASETS[entry.id]; if(D)buildView(D); else board.innerHTML='<div class="err">数据文件已加载，但未注册到 TRACE_DATASETS["'+entry.id+'"]。检查 data/'+entry.id+'.js 顶部赋值。</div>'; };
+    s.onerror=()=>{ hideLoading(); board.innerHTML='<div class="err">加载失败：'+entry.file+'（确认文件存在）。</div>'; };
     document.body.appendChild(s);
   }
   sel.addEventListener('change',()=>{const e=manifest.find(m=>m.id===sel.value);if(e)loadDataset(e);});

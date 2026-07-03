@@ -1,0 +1,1343 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transformer 原理 · 注意力如何让词理解上下文（GPT-2）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e0d; --panel:#111816; --panel-2:#0d1413;
+    --ink:#d8e6e0; --dim:#8a9e96;
+    --phos:#3dff9a; --amber:#ffb13d; --cyan:#39d0ff; --violet:#b78cff; --pink:#ff7eb6; --red:#ff5d5d;
+    --line:#223330; --grid:#1a2522;
+    --mono:"Space Mono","PingFang SC","Noto Sans SC",monospace;
+    --disp:"Bricolage Grotesque","PingFang SC","Noto Sans SC",sans-serif;
+    --zh:"PingFang SC","Noto Sans SC","Space Mono",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #102b22 0%, transparent 55%),
+      radial-gradient(900px 500px at 0% 110%, #1a160a 0%, transparent 50%), var(--bg);
+    color:var(--ink); font-family:var(--mono); line-height:1.6; overflow-x:hidden;
+  }
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 1px,transparent 1px 3px);mix-blend-mode:overlay}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 26px}
+  ::selection{background:var(--phos);color:#04140c}
+
+  header{padding:48px 0 8px}
+  .kicker{font-size:12px;letter-spacing:.3em;color:var(--phos);text-transform:uppercase;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--phos);box-shadow:0 0 12px var(--phos);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  h1{font-family:var(--disp);font-weight:800;font-size:clamp(30px,5vw,54px);line-height:1.02;letter-spacing:-.02em;margin:14px 0 12px}
+  h1 em{font-style:normal;color:var(--phos);text-shadow:0 0 30px rgba(61,255,154,.35)}
+  .sub{max-width:780px;color:var(--dim);font-size:14px;font-family:var(--zh)}
+  .sub b{color:var(--ink);font-weight:400;border-bottom:1px dashed var(--line)}
+
+  /* 分节 */
+  section{margin:44px 0}
+  .sectit{font-family:var(--disp);font-weight:800;font-size:clamp(22px,3vw,30px);letter-spacing:-.01em;line-height:1.1;display:flex;align-items:baseline;gap:12px}
+  .sectit .no{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--phos);opacity:.8}
+  .seclead{color:var(--dim);font-size:13.5px;margin:10px 0 0;max-width:760px;font-family:var(--zh)}
+  .seclead b{color:var(--ink);font-weight:400}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px}
+  .card.glow{border-left:3px solid var(--phos)}
+  .card.cy{border-left:3px solid var(--cyan)} .card.am{border-left:3px solid var(--amber)}
+  .card.vi{border-left:3px solid var(--violet)} .card.pk{border-left:3px solid var(--pink)}
+  .card h3{font-family:var(--disp);font-size:17px;font-weight:800;margin-bottom:8px}
+  .card p{font-size:13px;color:#bcd0c8;margin:8px 0;font-family:var(--zh)}
+  .card p b{color:var(--ink)}
+  code{font-family:var(--mono);background:var(--panel-2);border:1px solid var(--grid);border-radius:4px;padding:1px 6px;font-size:.9em;color:var(--cyan)}
+
+  /* 全景流水线 */
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin-top:20px}
+  .fstep{flex:1;min-width:120px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 14px;position:relative;transition:.15s;cursor:default}
+  .fstep:hover{border-color:var(--c);background:color-mix(in srgb,var(--c) 9%,var(--panel))}
+  .fstep .fn{font-size:11px;color:var(--c);font-weight:700;letter-spacing:.1em}
+  .fstep .ft{font-family:var(--disp);font-weight:800;font-size:14px;margin:3px 0 4px;color:var(--ink)}
+  .fstep .fd{font-size:11px;color:var(--dim);line-height:1.4}
+  .farrow{display:flex;align-items:center;color:var(--dim);font-size:16px;padding:0 6px}
+  @media(max-width:760px){
+    .flow{gap:8px}.fstep{flex-basis:100%}
+    .farrow{flex-basis:100%;justify-content:center;padding:0;margin:-4px 0}
+    .farrow::before{content:"↓"}
+    .farrow span{display:none}
+  }
+
+  /* ===== 注意力交互 demo ===== */
+  .demo{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px;margin-top:18px}
+  .demo .hint{font-size:12px;color:var(--dim);margin-bottom:18px}
+  .demo .hint b{color:var(--phos)}
+  .sent{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:8px;justify-content:center}
+  .tok{font-family:var(--disp);font-weight:700;font-size:17px;padding:9px 15px;border-radius:9px;appearance:none;-webkit-appearance:none;
+    background:var(--panel-2);border:1.5px solid var(--line);color:var(--ink);cursor:pointer;transition:.18s;position:relative;user-select:none}
+  .tok:hover{border-color:var(--dim)}
+  .tok:focus-visible{outline:2px solid var(--phos);outline-offset:2px}
+  .tok.query{border-color:var(--phos);background:color-mix(in srgb,var(--phos) 18%,var(--panel-2));color:#fff;box-shadow:0 0 18px rgba(61,255,154,.35)}
+  .tok .score{position:absolute;top:-9px;right:-9px;font-family:var(--mono);font-size:11px;font-weight:700;
+    background:var(--amber);color:#1a1204;border-radius:10px;padding:1px 6px;opacity:0;transform:scale(.6);transition:.2s;pointer-events:none}
+  .tok.lit .score{opacity:1;transform:scale(1)}
+  .tok .score.cut{background:#3a2727;color:#c76e6e;text-decoration:line-through}
+  .attnctl{display:flex;align-items:center;gap:10px;justify-content:center;margin:14px 0 4px;font-size:12px;color:var(--dim)}
+  .attnctl input[type=checkbox]{accent-color:var(--phos);width:15px;height:15px;cursor:pointer}
+  .attnctl label{cursor:pointer;display:flex;align-items:center;gap:7px}
+  .attnctl label b{color:var(--phos);font-weight:700}
+  #attn-sky{height:96px;position:relative;margin-bottom:2px}
+  .demo .explain{margin-top:20px;background:var(--panel-2);border:1px solid var(--grid);border-left:3px solid var(--amber);border-radius:10px;padding:15px 18px;min-height:84px}
+  .demo .explain .et{font-family:var(--disp);font-weight:800;font-size:14px;color:var(--amber);margin-bottom:6px}
+  .demo .explain .ep{font-size:12.5px;color:#bcd0c8;line-height:1.65;font-family:var(--zh)}
+  .demo .explain .ep b{color:#fff}
+
+  /* Q/K/V 三角色 */
+  .qkv{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+  @media(max-width:680px){.qkv{grid-template-columns:1fr}}
+  .qkvc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;border-top:3px solid var(--c)}
+  .qkvc .ql{font-family:var(--disp);font-weight:800;font-size:16px;color:var(--c)}
+  .qkvc .qs{font-size:11px;color:var(--dim);letter-spacing:.06em;margin:2px 0 10px}
+  .qkvc .qmeta{font-size:12px;color:#bcd0c8;line-height:1.6;font-family:var(--zh)}
+  .qkvc .qana{font-size:11.5px;color:var(--dim);margin-top:9px;border-top:1px dashed var(--line);padding-top:9px;font-style:italic}
+
+  /* Block 解剖 */
+  .block{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+  @media(max-width:760px){.block{grid-template-columns:1fr}}
+  .half{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .half.attn{border-left:3px solid var(--cyan)} .half.mlp{border-left:3px solid var(--violet)}
+  .half h4{font-family:var(--disp);font-size:15px;font-weight:800;margin-bottom:4px}
+  .half .tagline{font-size:11px;color:var(--dim);margin-bottom:10px}
+  .half p{font-size:12.5px;color:#bcd0c8;line-height:1.6;font-family:var(--zh)}
+  .vs{display:flex;justify-content:center;gap:0;margin:18px 0 0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .vs>div{flex:1;padding:13px 16px;font-size:12px}
+  .vs .vh{background:var(--panel-2);font-weight:700;color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .vs .vrow{display:flex;flex-direction:column}
+  .vrow span{padding:7px 16px;border-top:1px solid var(--grid)}
+  .vrow span:first-child{border-top:none}
+  .vs .ca{color:var(--cyan)} .vs .cm{color:var(--violet)}
+
+  /* MLP 档案墙 demo */
+  .mlpdemo{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:16px}
+  .mlpstage{display:grid;grid-template-columns:auto auto 1fr auto auto;gap:14px;align-items:center}
+  @media(max-width:760px){.mlpstage{grid-template-columns:1fr;gap:10px}.mlparrow{transform:rotate(90deg)}}
+  .mlpcard{background:var(--panel-2);border:1.5px solid var(--cyan);border-radius:10px;padding:12px 14px;min-width:128px;max-width:160px}
+  .mlpcard.out{border-color:var(--violet)}
+  .mlpcard .mcl{font-size:11px;letter-spacing:.06em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+  .mlpcard .mcv{font-family:var(--disp);font-weight:800;font-size:14px;color:var(--ink);line-height:1.25;transition:.3s}
+  .mlpcard.out .mcv{color:var(--violet)}
+  .mlparrow{font-size:11px;color:var(--dim);text-align:center;line-height:1.4}.mlparrow small{font-size:11px;opacity:.7}
+  .mlpwall .mcl{font-size:11px;letter-spacing:.04em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+  .mlpwall #mlp-gelutag{color:var(--amber);text-transform:none;letter-spacing:0;margin-left:8px;font-weight:700}
+  .drawers{display:grid;grid-template-columns:repeat(6,1fr);gap:5px}
+  @media(max-width:760px){.drawers{grid-template-columns:repeat(4,1fr)}}
+  .drw{height:30px;border-radius:5px;background:#0a100e;border:1px solid var(--grid);display:flex;align-items:center;justify-content:center;
+    font-size:11px;color:var(--dim);text-align:center;line-height:1.05;padding:2px;transition:.25s;overflow:hidden}
+  .drw.on{background:color-mix(in srgb,var(--phos) 26%,var(--panel-2));border-color:var(--phos);color:#dffaed;box-shadow:0 0 9px rgba(61,255,154,.3)}
+  .drw.killed{opacity:.18;filter:grayscale(1)}
+  .mlpctl{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:18px}
+  .mbtn{font-family:var(--mono);font-size:12.5px;font-weight:700;background:transparent;color:var(--phos);
+    border:1px solid var(--phos);padding:9px 16px;border-radius:6px;cursor:pointer;transition:.18s}
+  .mbtn:hover:not(:disabled){background:var(--phos);color:#04140c;box-shadow:0 0 18px rgba(61,255,154,.4)}
+  .mbtn:disabled{opacity:.45;cursor:default}
+  .mlpstep{font-size:11.5px;color:var(--dim)}
+
+  /* 6.1 因果掩码三角矩阵 */
+  .maskgrid{display:inline-grid;gap:4px;margin-top:14px;font-family:var(--mono);font-size:11px}
+  .maskgrid .mg-cell{width:62px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:5px;text-align:center;line-height:1.05}
+  .maskgrid .mg-corner{color:var(--dim);font-size:11px;opacity:.6}
+  .maskgrid .mg-head{color:var(--cyan);font-weight:700;font-size:11px}
+  .maskgrid .mg-row{color:var(--cyan);font-weight:700;font-size:11px;justify-content:flex-end;padding-right:6px;width:auto}
+  .maskgrid .mg-see{background:color-mix(in srgb,var(--phos) 18%,var(--panel-2));border:1px solid var(--phos);color:var(--phos)}
+  .maskgrid .mg-mask{background:#1c1212;border:1px solid #4d2b2b;color:#c98080}
+  /* 6.1 最后一个 token 示意 */
+  .lastpick{display:flex;gap:7px;margin-top:14px;flex-wrap:wrap;align-items:center}
+  .lastpick .lp{font-family:var(--disp);font-weight:700;font-size:13px;padding:7px 12px;border-radius:8px;
+    background:var(--panel-2);border:1.5px solid var(--line);color:var(--dim);position:relative}
+  .lastpick .lp.last{border-color:var(--cyan);color:#fff;background:color-mix(in srgb,var(--cyan) 16%,var(--panel-2));box-shadow:0 0 16px rgba(57,208,255,.3)}
+  .lastpick .lp.last::after{content:"↓ 送去打分";position:absolute;left:50%;transform:translateX(-50%);top:calc(100% + 5px);
+    white-space:nowrap;font-family:var(--mono);font-size:11px;font-weight:400;color:var(--cyan)}
+  .lastpick .arrow{color:var(--dim);font-size:13px}
+
+  /* 6.2 点积小例子 */
+  .dotgrid{display:grid;grid-template-columns:auto repeat(3,1fr);gap:5px;margin-top:14px;font-size:11.5px;max-width:540px}
+  .dotgrid .dg{padding:7px 10px;border-radius:6px;background:var(--panel-2);border:1px solid var(--grid);text-align:center}
+  .dotgrid .dg.h{color:var(--dim);font-size:11px;letter-spacing:.03em;line-height:1.25}
+  .dotgrid .dg.w{font-family:var(--disp);font-weight:700;color:#bcd0c8;text-align:left}
+  .dotgrid .dg.v{font-family:var(--mono);color:var(--ink)}
+  .dotcalc{display:flex;flex-direction:column;gap:7px;margin-top:14px}
+  .dcrow{display:grid;grid-template-columns:96px 1fr 70px;gap:12px;align-items:center;font-size:12px}
+  .dcrow .dcw{font-family:var(--disp);font-weight:700;text-align:right;white-space:nowrap}
+  .dcrow .dcm{font-family:var(--mono);font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dcrow .dcv{font-family:var(--mono);font-weight:700;text-align:right}
+  .dcrow.hi .dcw{color:var(--phos)} .dcrow.hi .dcv{color:var(--phos)}
+  .dcrow.lo .dcw{color:var(--dim)} .dcrow.lo .dcv{color:var(--dim)}
+
+  /* 6.2 LM Head 打分台 */
+  .scoredesk{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-top:16px}
+  .scoredesk .sd-h{font-size:12px;color:var(--dim);margin-bottom:14px}
+  .sd-rows{display:flex;flex-direction:column;gap:8px}
+  .sdrow{display:grid;grid-template-columns:118px 1fr 86px;gap:12px;align-items:center;font-size:12.5px}
+  .sdrow .sw{font-family:var(--disp);font-weight:700;color:#bcd0c8;text-align:right;white-space:nowrap}
+  .sdrow.top .sw{color:var(--phos)}
+  .sdtrack{height:16px;background:#0a100e;border:1px solid var(--grid);border-radius:5px;overflow:hidden;position:relative}
+  .sdtrack i{display:block;height:100%;border-radius:4px;width:0;transition:width .7s cubic-bezier(.2,.7,.2,1)}
+  .sdrow .sv{font-family:var(--mono);font-size:11px;color:var(--dim);white-space:nowrap}
+  .sdrow .sv b{color:var(--ink)}
+  .sd-note{font-size:11px;color:var(--dim);margin-top:14px;border-top:1px dashed var(--line);padding-top:10px;line-height:1.6}
+  .sd-note b{color:var(--ink)}
+
+  /* 采样温度 demo */
+  .tempdemo{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px}
+  .tempctl{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .tempctl label{font-size:12px;color:var(--dim)}
+  .tempctl input[type=range]{accent-color:var(--phos);width:200px}
+  .tempval{font-family:var(--disp);font-weight:800;font-size:20px;color:var(--phos);min-width:54px}
+  .tempmode{font-size:11px;color:var(--amber);border:1px solid var(--amber);border-radius:20px;padding:2px 11px}
+  .bars{display:flex;flex-direction:column;gap:9px}
+  .brow{display:grid;grid-template-columns:96px 1fr 52px;gap:12px;align-items:center;font-size:12.5px}
+  .brow .bw{color:#bcd0c8;text-align:right;font-weight:700}
+  .brow .btrack{height:18px;background:#0a100e;border:1px solid var(--grid);border-radius:5px;overflow:hidden}
+  .brow .btrack i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--phos));border-radius:4px;width:0;transition:width .35s ease}
+  .brow .bp{color:var(--dim);font-size:11px}
+
+  /* 速查表 */
+  table.spec{width:100%;border-collapse:collapse;margin-top:16px;font-size:12.5px}
+  table.spec th,table.spec td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  table.spec th{color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700}
+  table.spec td:first-child{color:#bcd0c8}
+  table.spec td.v{color:var(--phos);font-weight:700;font-family:var(--mono)}
+  table.spec tr:hover td{background:rgba(61,255,154,.04)}
+
+  .params{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+  .pchip{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:9px 14px;font-size:12px}
+  .pchip b{font-family:var(--disp);color:var(--phos);font-size:16px;font-weight:800;margin-right:6px}
+  .pchip span{color:var(--dim)}
+
+  .callout{background:linear-gradient(180deg,rgba(255,255,255,.025),transparent);border:1px solid var(--line);border-left:3px solid var(--cyan);border-radius:10px;padding:15px 18px;margin-top:16px;font-size:12.5px;color:#bcd0c8;line-height:1.7;font-family:var(--zh)}
+  .callout b{color:var(--ink)}
+  .callout .ct{font-family:var(--disp);font-weight:800;color:var(--cyan);font-size:13px;margin-bottom:5px;display:block}
+
+  .takeaway{background:var(--panel);border:1px solid var(--phos);border-radius:14px;padding:26px;margin-top:18px;text-align:center}
+  .takeaway p{font-size:15px;color:var(--ink);line-height:1.7;max-width:780px;margin:0 auto;font-family:var(--zh)}
+  .takeaway p em{font-style:normal;color:var(--phos)}
+
+  footer{border-top:1px solid var(--line);margin-top:48px;padding:24px 0 64px;color:var(--dim);font-size:12px}
+  footer b{color:var(--phos)} footer a{color:var(--cyan);text-decoration:none}
+  footer a:hover{text-decoration:underline}
+
+  /* ===== 首屏快捷 chips ===== */
+  .jumps{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+  .jumps a{font-family:var(--mono);font-size:11px;color:var(--phos);text-decoration:none;border:1px solid color-mix(in srgb,var(--phos) 35%,transparent);
+    border-radius:20px;padding:5px 13px;transition:.15s}
+  .jumps a:hover{background:color-mix(in srgb,var(--phos) 14%,transparent)}
+  .jumps .jl{font-size:11px;color:var(--dim);align-self:center;margin-right:2px}
+
+  /* ===== §01 token 旅程 ===== */
+  .fstep.lit{border-color:var(--c);background:color-mix(in srgb,var(--c) 13%,var(--panel));box-shadow:0 0 16px color-mix(in srgb,var(--c) 30%,transparent)}
+  #flow-next{font-family:var(--disp);font-weight:800;font-size:12px;color:var(--pink);border:1.5px dashed var(--pink);
+    border-radius:8px;padding:4px 10px;position:absolute;opacity:0;pointer-events:none;white-space:nowrap;z-index:6}
+
+  /* ===== 三次矩阵乘法舞台 ===== */
+  .mmstage{margin-top:14px;background:var(--panel-2);border:1px solid var(--grid);border-radius:10px;padding:8px 6px 2px;overflow-x:auto}
+  .mmstage svg{display:block;margin:0 auto;font-family:var(--mono)}
+  .mmstage text{font-family:var(--mono)}
+  .mm-cap{font-size:11.5px;color:var(--dim);text-align:center;margin:6px 0 8px;min-height:1.5em}
+  .mm-cap b{color:var(--ink)}
+
+  /* ===== §04 多头切分 ===== */
+  .mhstage{margin-top:14px;background:var(--panel-2);border:1px solid var(--grid);border-radius:10px;padding:10px 8px 4px;overflow-x:auto}
+  .mhstage svg{display:block;margin:0 auto}
+  .mh-cap{font-size:11.5px;color:var(--dim);text-align:center;margin:4px 0 8px;min-height:1.4em}
+
+  /* ===== §6.2 点积舞台 ===== */
+  .dcrow{position:relative}
+  .dcrow .dcm span{display:inline-block;border-radius:3px;padding:0 2px}
+  .dcrow .dcm span.dchi{background:color-mix(in srgb,var(--phos) 22%,transparent);color:var(--phos)}
+  #dot-acc-note{font-size:11px;color:var(--dim);margin-top:8px}
+
+  /* ===== §6.1 掩码入场 & 视野扫描 ===== */
+  .maskgrid .mg-cell{transform-style:preserve-3d;backface-visibility:hidden}
+  .lastpick .lp .seen{position:absolute;left:0;right:0;bottom:-3px;height:2px;background:var(--phos);border-radius:2px;
+    transform:scaleX(0);transform-origin:left;opacity:.85}
+
+  /* ===== §07 自回归 + KV Cache ===== */
+  .ar-demo{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-top:16px}
+  .ar-sent{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px}
+  .ar-sent .art{font-family:var(--disp);font-weight:700;font-size:13.5px;padding:5px 10px;border-radius:7px;
+    background:var(--panel-2);border:1.5px solid var(--line);color:#bcd0c8}
+  .ar-sent .art.new{border-color:var(--pink);color:#fff;background:color-mix(in srgb,var(--pink) 16%,var(--panel-2))}
+  .ar-logits{display:flex;gap:5px;align-items:flex-end;height:44px;margin:14px 0 4px}
+  .ar-logits .alb{width:30px;border-radius:3px 3px 0 0;background:linear-gradient(180deg,var(--cyan),#155);position:relative}
+  .ar-logits .alb i{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--dim);white-space:nowrap}
+  .ar-logits .alb.win{background:linear-gradient(180deg,var(--phos),#153)}
+  .ar-lanes{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+  @media(max-width:680px){.ar-lanes{grid-template-columns:1fr}}
+  .ar-lane{background:var(--panel-2);border:1px solid var(--grid);border-radius:10px;padding:12px 14px}
+  .ar-lane .alh{font-size:11px;letter-spacing:.06em;margin-bottom:9px;font-weight:700}
+  .ar-lane.kv .alh{color:var(--phos)} .ar-lane.naive .alh{color:var(--red)}
+  .ar-cells{display:flex;gap:4px;flex-wrap:wrap}
+  .ar-cells .kvc{width:26px;height:26px;border-radius:5px;background:#0a100e;border:1px solid var(--grid);
+    display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dim)}
+  .ar-cells .kvc.on{background:color-mix(in srgb,var(--phos) 24%,var(--panel-2));border-color:var(--phos);color:var(--phos)}
+  .ar-cells .kvc.re{background:color-mix(in srgb,var(--red) 22%,var(--panel-2));border-color:var(--red);color:var(--red)}
+  .ar-lane .alcost{font-size:11px;color:var(--dim);margin-top:9px}
+  .ar-lane .alcost b{font-family:var(--mono)}
+  .ar-lane.kv .alcost b{color:var(--phos)} .ar-lane.naive .alcost b{color:var(--red)}
+  .ar-next{font-size:11.5px;color:var(--dim);margin-top:14px;border-top:1px dashed var(--line);padding-top:10px}
+  .ar-next a{color:var(--cyan);text-decoration:none}
+
+  /* ===== MLP 幕次进度点 ===== */
+  .mlpdots{display:flex;gap:6px;align-items:center}
+  .mlpdots i{font-style:normal;font-size:12px;color:var(--dim);opacity:.4;transition:.2s}
+  .mlpdots i.cur{color:var(--phos);opacity:1;text-shadow:0 0 8px rgba(61,255,154,.5)}
+
+  /* ===== 温度刻度 + 采样 ===== */
+  .tticks{display:flex;justify-content:space-between;width:200px;font-size:11px;color:var(--dim);margin-top:-6px}
+  .tsample{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;border-top:1px dashed var(--line);padding-top:14px}
+  #tsample-out{font-family:var(--disp);font-weight:800;font-size:15px;color:var(--phos);min-width:120px}
+  #tsample-hist{font-size:11px;color:var(--dim)}
+
+  @media (prefers-reduced-motion: reduce){
+    .kicker .dot{animation:none}
+    *{transition-duration:.01ms !important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker"><span class="dot"></span> GPU EXPLAINER · TRANSFORMER 原理</div>
+    <h1>一句话怎么被<br><em>读懂、再续写</em></h1>
+    <p class="sub">Transformer 的本质是个 <b>"下一个 token 预测器"</b>：给一段文本，输出词表上每个词作为下一个词的概率，采一个出来，再接着预测。它能爆火的核心是 <b>self-attention</b>——一次前向就能把任意远的词关联起来。下面用 <b>GPT-2 (small)</b> 为例，把这套机制拆开看。</p>
+    <div class="jumps">
+      <span class="jl">▸ 本页可交互演示</span>
+      <a href="#sec2">◉ 注意力</a>
+      <a href="#sec5">◉ MLP 档案墙</a>
+      <a href="#sec6">◉ 掩码与打分</a>
+      <a href="#sec7">◉ KV Cache</a>
+    </div>
+  </header>
+
+  <!-- ===== 1. 全景流水线 ===== -->
+  <section>
+    <div class="sectit"><span class="no">01</span>整体流水线 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">从一句话到下一个词，数据要走这 6 段。前两段是 <b>tokenizer</b> 的活（无参数、纯规则），后面才是<b>模型</b>（有参数、会训练）。看一个 token 走完全程——到终点吐出"下一个词"，再拼回句尾重新出发（这就是自回归，详见 §07）。</p>
+    <div class="flow" id="flow"></div>
+    <div id="flow-ctl"></div>
+    <div class="callout">
+      <span class="ct">分界线：模型只认整数 id，不认字符串</span>
+      Tokenizer 是一套 BPE 规则表 + 词表，把文本切成子词再查成 id 列表；模型从拿到 id 开始，<code>W_E</code>（词向量）和 <code>W_P</code>（位置向量）都是可学习参数。同一套 tokenizer 能给多个模型用。
+    </div>
+  </section>
+
+  <!-- ===== 2. 注意力交互 demo ===== -->
+  <section id="sec2">
+    <div class="sectit"><span class="no">02</span>注意力：让每个词看一眼其他词 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">同一个"苹果"，在<b>"苹果的发布会让股价大涨"</b>里是公司，在"我吃了一个苹果"里是水果。怎么区分？<b>看周围的词</b>。点下面任意一个词，看它如何按相关度"吸收"上下文。</p>
+
+    <div class="demo" id="attn-demo">
+      <div class="hint">▸ 点一个词作为 <b>Query（提问方）</b>，弧线连向它关注的词——线越粗分数越高，粒子沿弧线把信息"喂"给它。</div>
+      <div id="attn-sky"></div>
+      <div class="sent" id="sent"></div>
+      <div class="attnctl">
+        <label><input type="checkbox" id="mask-toggle"> 打开<b>因果掩码</b>（GPT 实际模式：只能看左边，右侧弧线会被剪断）</label>
+      </div>
+      <div class="explain" id="attn-explain">
+        <div class="et">点一个词开始</div>
+        <div class="ep">默认演示 <b>"苹果"</b>：它的 Query 去和每个词的 Key 打分，发现"发布会"(0.60)、"股价"(0.25)最相关，于是大量吸收这两个商业词的含义——"苹果"就从字典里中性的苹果，变成了<b>商业语境下的苹果（公司）</b>。</div>
+      </div>
+    </div>
+
+    <div class="callout" style="border-left-color:var(--amber)">
+      <span class="ct" style="color:var(--amber)">默认演示是"双向"的，勾上面的<b>因果掩码</b>开关，就是 GPT 的"单向"真面目</span>
+      GPT 是 decoder-only：每个词只能看自己和左边，看不到右边——这是它能"逐词生成"的关键，详见 <a href="#sec6" style="color:var(--cyan)">第 06 节</a>。
+    </div>
+
+    <div class="card glow">
+      <h3>这一步的数学，其实就三次矩阵乘法 <span class="gx-badge">可交互</span></h3>
+      <p>每个词向量 <code>x</code> 乘以三个训练出来的矩阵，投影成三个角色：<code>Q = x·W_Q</code>、<code>K = x·W_K</code>、<code>V = x·W_V</code>。然后 <code>Q·Kᵀ</code> 算相关度分数 → <code>softmax</code> 归一成权重 → 用权重加权所有 <code>V</code> 求和，就是这个词"吸收上下文后"的新表示。用一个 4 维小例子把四幕演一遍（≪ ≫ 可逐幕步进）：</p>
+      <div class="mmstage" id="mm-stage"></div>
+      <div class="mm-cap" id="mm-cap">▶ 播放：看 x 如何变成 Q/K/V、打分、归一、再合成输出</div>
+      <div id="mm-ctl"></div>
+      <p style="color:var(--dim)">把 W_Q 想象成"提问眼镜"、W_K 是"标签眼镜"、W_V 是"内容眼镜"——同一个词戴不同眼镜，看出三个不同向量。这三副眼镜里的数字<b>没人写死，是训练几十亿次自己学出来的</b>。</p>
+    </div>
+  </section>
+
+  <!-- ===== 3. Q/K/V 借书单 ===== -->
+  <section>
+    <div class="sectit"><span class="no">03</span>Q / K / V：借书单类比</div>
+    <p class="seclead">为什么要拆成三个角色？因为"<b>我在找什么</b>"和"<b>我能被找到什么</b>"不是一回事——同一个人，写借书单和印书脊标题，内容不一样。</p>
+    <div class="qkv" id="qkv"></div>
+  </section>
+
+  <!-- ===== 4. 多头 ===== -->
+  <section>
+    <div class="sectit"><span class="no">04</span>多头：同时从 12 个角度开会 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">一次会议不够。GPT-2 把 768 维切成 <b>12 段、每段 64 维</b>，每段配一套自己的 W_Q/W_K/W_V 独立做注意力，算完再拼回来。看下面"切开 → 各自连线 → 合并"三拍：</p>
+    <div class="mhstage" id="mh-stage"></div>
+    <div class="mh-cap" id="mh-cap"></div>
+    <div id="mh-ctl"></div>
+    <div class="card vi">
+      <h3>12 个头的"分工"是训练逼出来的，不是写死的</h3>
+      <p>这 12 套矩阵初始全是随机数、毫无区别。但它们的输出会拼起来一起用——如果都学同一件事就浪费了 11 个头。训练时梯度会<b>自然把它们推向不同方向</b>。事后探查发现：有的头专看"前一个词"，有的专看句末标点，有的专看代词指代关系。</p>
+      <p style="color:var(--dim)">类比：雇 12 个新人不分配岗位、只考核团队总产出，半年后他们自己分出了采购/销售/客服——因为这样 loss 最低。<b>头的数量（12）是人设的超参数，头之间做什么是学出来的。</b></p>
+    </div>
+  </section>
+
+  <!-- ===== 5. 一个 Block ===== -->
+  <section>
+    <div class="sectit"><span class="no">05</span>一个 Transformer Block 在干什么</div>
+    <p class="seclead">输入输出形状都是 <code>(n, 768)</code>——token 数没变、维度没变，变的是向量里的"内容"。一个 Block 做两件事：</p>
+    <div class="block">
+      <div class="half attn">
+        <h4>① Attention — 开会</h4>
+        <div class="tagline">在 token 维度操作 · 跨 token 混合</div>
+        <p>所有 token 坐一起交换信息，每个词按相关度吸收其他词的上下文。这是唯一让 token 之间"互动"的环节。</p>
+      </div>
+      <div class="half mlp">
+        <h4>② MLP — 会后整理</h4>
+        <div class="tagline">在特征维度操作 · 每个 token 独立</div>
+        <p>每个 token 单独把刚听到的消化成新理解：<code>768→3072→GELU→768</code>，先扩张到高维做非线性混合再压回。模型的<b>事实知识</b>主要存在这里。</p>
+      </div>
+    </div>
+    <div class="vs">
+      <div class="vrow"><span class="vh">对比维度</span><span>在哪个维度操作</span><span>功能</span><span>token 之间有互动吗</span></div>
+      <div class="vrow ca"><span class="vh">Attention</span><span>token 维度（跨 token）</span><span>混合上下文信息</span><span>有</span></div>
+      <div class="vrow cm"><span class="vh">MLP</span><span>特征维度（各算各的）</span><span>非线性特征加工</span><span>无</span></div>
+    </div>
+    <div class="callout">
+      <span class="ct">外面还包着两层"保护壳"</span>
+      <b>LayerNorm</b>：把每层输出拉回差不多的数值尺度，防止越传越飘（GPT-2 用 Pre-LN，放子层之前）。<b>残差连接</b> <code>x' = x + Sublayer(LN(x))</code>：让梯度沿加号直通流回底层，相当于给反向传播开高速公路。两者缺一训练就跑不起来。
+    </div>
+    <p class="seclead" style="margin-top:16px">12 个这样的 Block 串起来。浅层学词法语法，深层学语义推理：<code>苹果 → 商业语境的苹果 → 一家科技公司 → 库克掌管的那家</code>。</p>
+
+    <!-- MLP "档案墙" 交互 demo -->
+    <h3 id="sec5" style="font-family:var(--disp);font-weight:800;font-size:18px;margin:28px 0 4px">MLP 在干什么？一面"私人档案墙" <span class="gx-badge">可交互</span></h3>
+    <p class="seclead">如果说 attention 是"开会交流"，<b>MLP 就是会后回到工位、独自查资料消化</b>。接着"苹果"的例子：开完会它手里的卡片已是"商业语境的苹果"，现在它走到 MLP 这一步——<b>谁也不理谁，关起门加工</b>。点下面的按钮走一遍：</p>
+    <div class="mlpdemo">
+      <div class="mlpstage" id="mlp-stage">
+        <div class="mlpcard" id="mlp-in">
+          <div class="mcl">输入卡片 · 768 维</div>
+          <div class="mcv" id="mlp-inv">商业语境下的苹果</div>
+        </div>
+        <div class="mlparrow">①&nbsp;扩张<br><small>768 → 3072</small></div>
+        <div class="mlpwall">
+          <div class="mcl">3072 个"特征探测器"（这里抽样 24 个）<span id="mlp-gelutag"></span></div>
+          <div class="drawers" id="mlp-drawers"></div>
+        </div>
+        <div class="mlparrow">③&nbsp;压缩<br><small>3072 → 768</small></div>
+        <div class="mlpcard out" id="mlp-out">
+          <div class="mcl">输出卡片 · 768 维</div>
+          <div class="mcv" id="mlp-outv">？</div>
+        </div>
+      </div>
+      <div class="mlpctl">
+        <button class="mbtn" id="mlp-run">▶ 走一遍：刷卡 → GELU 筛选 → 综合</button>
+        <span class="mlpdots" id="mlp-dots"><i>①</i><i>②</i><i>③</i></span>
+        <span class="mlpstep" id="mlp-step">点按钮：看哪些抽屉被点亮</span>
+      </div>
+      <div id="mlp-ctl"></div>
+    </div>
+    <div class="callout">
+      <span class="ct">这面"档案墙"就是模型存事实知识的地方</span>
+      像"巴黎是法国首都""苹果总部在库比蒂诺"这类知识，主要编码在 MLP 的权重 <code>W₁、W₂</code> 里。<b>Attention 负责看上下文，MLP 负责调取并注入世界知识。</b>为什么要"先扩张再压缩"？低维里概念是挤在一起、纠缠的；摊到 3072 维的大桌子上才有地方把它们拆开、按需点亮、再重新组合。
+    </div>
+  </section>
+
+  <!-- ===== 6. 输出 + 采样 ===== -->
+  <section id="sec6">
+    <div class="sectit"><span class="no">06</span>从向量到下一个词</div>
+    <p class="seclead">MLP 之后，每个 token 都是一个加工好的 768 维向量。但我们要的是<b>一个词</b>，不是向量。这中间发生了三件事：<b>① 只取最后一个 token</b> → <b>② LM Head 给词表里每个词打分</b> → <b>③ softmax 转概率、采样</b>。一步步看。</p>
+
+    <!-- 6.1 为什么只看最后一个 token -->
+    <div class="card cy">
+      <h3>① 为什么只用"最后一个" token 的向量？ <span class="gx-badge">可交互</span></h3>
+      <p>常见疑问：<b>注意力不是每个词都和所有词算吗，为啥说"只看左边"？</b> 关键在 <b>因果掩码（causal mask）</b>。算注意力会先得到一张 n×n 分数矩阵，本来每个词确实能看到所有词；但 GPT 在 softmax <b>之前</b>，把"看右边（未来）"的格子全置成 −∞，softmax 后变成 0 —— 这条通路被掐断了。</p>
+      <p style="color:var(--dim)">为什么要掐？因为任务是"预测下一个词"。训练时整句一起喂进去，如果位置 <code>love</code> 能看到右边的答案 <code>you</code>，它直接抄答案、啥也学不会。所以强制：<b>预测第 i 个词时只能看 0~i</b>，训练和推理才一致（推理时未来的词本来还没生成）。双向、不掩码的是 BERT 那类 encoder。</p>
+      <div class="maskgrid" id="maskgrid"></div>
+      <p style="margin-top:14px">于是每个位置"看到的范围"是阶梯式的，<b>只有最后一个位置看到了整句话</b>——它的 768 维向量才是"读完全文后对下一个词的预判"，所以只送它去打分：</p>
+      <div class="lastpick" id="lastpick"></div>
+      <p style="color:var(--dim);margin-top:10px">（训练时不一样：每个位置都要预测它的下一个词，所以 n 个位置全都打分、一次算 n 份 loss。但<b>推理生成</b>时只关心最后一个。）</p>
+    </div>
+
+    <!-- 6.2 LM Head 打分台 -->
+    <h3 style="font-family:var(--disp);font-weight:800;font-size:18px;margin:28px 0 4px">② LM Head：一个向量，怎么变成 5 万个分数？</h3>
+
+    <div class="callout" style="border-left-color:var(--amber)">
+      <span class="ct" style="color:var(--amber)">先破一个误解：h 不是"最后一个词"的含义</span>
+      读完 <code>苹果的发布会让股价___</code>，若 h 只代表"股价"，最像它的词该是"股票/价格"——可我们要的是"大涨"。经过 12 层加工、又只有最后位置读完了整句，<code>h</code> 代表的是<b>"读完全文后对'下一个词该长什么样'的预判"</b>——一个理想答案的向量。打分就是拿它去词表里找最贴合的真实词。
+    </div>
+
+    <p class="seclead">具体怎么打分：LM Head 是一个 <code>768 × 50257</code> 的大矩阵——<b>它的每一列就是一个词的"特征向量"</b>。拿 <code>h</code> 和每个词的列向量做<b>点积</b>：方向越接近，分数（logit）越高。</p>
+
+    <div class="callout" style="border-left-color:var(--phos)">
+      <span class="ct" style="color:var(--phos)">"点积大" = "连贯的下一个词"，是训练焊进去的</span>
+      语义连贯是目标，点积只是媒介。几十亿次完形填空同时拧两边的螺丝：让 <code>h</code> 指向连贯续写的方向，也让"该接上的词"的向量正好落在那个方向上。拧到最后，"点积大"就被定义成了"训练数据里最该接上的词"。
+    </div>
+
+    <!-- 为什么点积能 work：3 维小例子 -->
+    <div class="card glow">
+      <h3>为什么"点积"能 work？一个能手算的小例子 <span class="gx-badge">可交互</span></h3>
+      <p>把词义压缩到<b>只有 3 维</b>（真实是 768 维，原理一样），每维代表一种语义属性：<code>①科技/商业</code> <code>②食物/水果</code> <code>③动作/动词</code>。于是每个词就是 3 个数：</p>
+      <div class="dotgrid" id="dotgrid"></div>
+      <p style="margin-top:12px">模型读完 <code>苹果的发布会让股价___</code>，最后一个 token 吐出 <b style="color:var(--phos)">h = [0.85, 0.05, 0.10]</b>（强烈偏"科技/商业"方向）。点积 = <b>逐维相乘再相加</b>。播放动画：每对分量高亮相乘、飞入右侧累加器，算完四个词按分数重新排位：</p>
+      <div class="dotcalc" id="dotcalc"></div>
+      <div id="dot-ctl"></div>
+      <p style="color:var(--dim);margin-top:12px"><b>h 这根箭头指向"科技/商业"，于是和同方向的词点积大、得分高；和"食物""动作"方向的词点积小。</b> 这就是 logit。</p>
+    </div>
+
+    <div class="callout" style="border-left-color:var(--phos)">
+      <span class="ct" style="color:var(--phos)">为什么这套机制能学会？三点</span>
+      <b>① 点积天生是相似度尺子</b>（|h|·|词|·cos 夹角，和 §02 的 Q·Kᵀ 同一把尺）；
+      <b>② 词向量和"产生 h 的权重"一起被梯度训练</b>，逼到该出现的词正好落在 h 的方向上；
+      <b>③ 近义词向量相近</b>，h 指对方向，一整簇近义词同时得高分。
+    </div>
+
+    <div class="callout" style="border-left-color:var(--cyan)">
+      <span class="ct" style="color:var(--cyan)">一句话记住：调收音机</span>
+      h 是模型喊出的"暗号频率"，5 万个词各守一个频率，点积就是"谁共振最强"——共振最强的词就是最可能的下一个词。
+    </div>
+
+    <div class="scoredesk">
+      <div class="sd-h">最后一个 token 的向量 · <span style="color:var(--phos)">h</span> &nbsp;·&nbsp; 和词表里每个词的向量做点积 → logit</div>
+      <div class="sd-rows" id="sd-rows"></div>
+      <div class="sd-note">点积大 = 方向接近 = "这个词和当前语境很搭" → logit 高。这里只画了几个候选；真实是对全部 <b>50,257</b> 个词同时打分，得到 50257 个 logit。 <button class="gx-btn" id="sd-replay" type="button" style="margin-left:8px">↺ 重播</button></div>
+    </div>
+    <div class="callout">
+      <span class="ct">省参数小技巧：Weight Tying（权重绑定）</span>
+      GPT-2 直接把输入端的词嵌入矩阵 <code>W_E</code> 转置过来当 LM Head 用——"查向量"和"按向量打分"复用同一张表，省下 3800 万参数，效果还更好。
+    </div>
+
+    <!-- 6.3 softmax + 采样 -->
+    <h3 style="font-family:var(--disp);font-weight:800;font-size:18px;margin:28px 0 4px">③ Softmax → 概率 → 采样</h3>
+    <p class="seclead">50257 个 logit 还只是"分数"（有正有负、不归一）。<b>softmax</b> 把它们压成<b>和为 1 的概率</b>：分数高的概率大。最后按概率<b>采</b>一个词出来——<b>注意：不是简单粗暴取分数最高的那个</b>（那只是 temperature→0 的特例），而是按概率随机采，所以同一句话每次续写可能不同。怎么采，决定输出风格。拖动温度看分布怎么变：</p>
+    <div class="tempdemo">
+      <div class="tempctl">
+        <label>Temperature</label>
+        <span style="display:inline-flex;flex-direction:column">
+          <input type="range" id="temp" min="0.1" max="2" step="0.1" value="1" list="tticks">
+          <datalist id="tticks"><option value="0.1"><option value="0.5"><option value="1"><option value="1.5"><option value="2"></datalist>
+          <span class="tticks"><span>0.1</span><span>1.0</span><span>2.0</span></span>
+        </span>
+        <span class="tempval" id="tempv">1.0</span>
+        <span class="tempmode" id="tempmode">保持原分布</span>
+      </div>
+      <div class="bars" id="bars"></div>
+      <div class="tsample">
+        <button class="mbtn" id="tsample-btn">$ 按当前分布采样一次</button>
+        <span id="tsample-out">—</span>
+        <span id="tsample-hist"></span>
+      </div>
+    </div>
+    <div class="callout">
+      <span class="ct">三种采样策略</span>
+      <b>Temperature</b>：T&lt;1 分布更尖、输出保守确定；T&gt;1 更平、发散有创造力；T→0 退化成贪心。
+      <b>Top-k</b>：只从概率最高的 k 个里采。
+      <b>Top-p（核采样）</b>：取累计概率刚超过 p 的最小集合里采，比 top-k 更自适应。
+    </div>
+  </section>
+
+  <!-- ===== 7. 自回归 + KV cache ===== -->
+  <section id="sec7">
+    <div class="sectit"><span class="no">07</span>自回归循环 → 为什么有 Prefill / Decode <span class="gx-badge">可交互</span></div>
+    <div class="card am">
+      <h3>拿到下一个词，拼回末尾，再走一遍</h3>
+      <p>朴素做法每生成一个 token 就重算整个序列所有层的 Q/K/V——O(n²)，越写越慢。<b>解法是 KV Cache</b>：把历史 token 的 K、V 缓存下来，下一步只给新 token 算一份，和缓存拼起来做注意力，decode 每步降到 O(n)。</p>
+      <p>这正是实际推理分两阶段的原因：<b>Prefill</b> 一次性算完输入所有 token、把 KV 灌进缓存（算力重）；<b>Decode</b> 逐 token 生成、复用缓存（访存重）。</p>
+    </div>
+    <div class="ar-demo" id="ar-demo">
+      <div class="ar-sent" id="ar-sent"></div>
+      <div class="ar-logits" id="ar-logits"></div>
+      <div class="ar-lanes">
+        <div class="ar-lane kv">
+          <div class="alh">◉ KV Cache：每步只新增一格</div>
+          <div class="ar-cells" id="ar-kv"></div>
+          <div class="alcost">本步计算量 <b id="ar-kv-cost">0</b> 份 K/V</div>
+        </div>
+        <div class="ar-lane naive">
+          <div class="alh">✕ 朴素做法：每步全部重算</div>
+          <div class="ar-cells" id="ar-naive"></div>
+          <div class="alcost">本步计算量 <b id="ar-nv-cost">0</b> 份 K/V</div>
+        </div>
+      </div>
+      <div id="ar-ctl"></div>
+      <div class="ar-next">▸ 这就是 Prefill / Decode 分界的由来 —— <a href="index.html">去"真实数据流"页看这两阶段的实测 trace →</a></div>
+    </div>
+  </section>
+
+  <!-- ===== 8. GPT-2 参数 + 速查表 ===== -->
+  <section>
+    <div class="sectit"><span class="no">08</span>GPT-2 (small) 的数字</div>
+    <div class="params" id="params"></div>
+    <table class="spec" id="spec"></table>
+  </section>
+
+  <!-- ===== 总结 ===== -->
+  <section>
+    <div class="takeaway">
+      <p>Transformer = <em>嵌入 → N 层（attention 混 token + MLP 变特征 + 残差 + LN）→ 投影到词表 → 采样</em>。<br>
+      所有"智能"——Q/K/V 的视角、多头的分工——都不是人写死的规则，而是给定结构后，让模型在海量数据上做完形填空，<em>梯度下降自己涌现</em>出来的分工。</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>Transformer 原理页 · 内容整理自我的 Obsidian 学习笔记（<b>transformer 学习笔记</b> + <b>会议室与借书单</b>），以 GPT-2 (small) 为例。
+    交互动画为原创示意，注意力分数是说明性数值（非真实模型输出）。延伸阅读：poloclub <a href="https://poloclub.github.io/transformer-explainer/" target="_blank" rel="noopener">Transformer Explainer</a>（浏览器里跑真实 GPT-2）。</p>
+  </footer>
+
+</div>
+
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/ScrollTrigger.min.js"></script>
+<script src="vendor/MotionPathPlugin.min.js"></script>
+<script src="gx.js"></script>
+<script>
+// ---------- 1. 流水线 ----------
+const FLOW=[
+  {n:'①',t:'Tokenize',d:'BPE 把文本切成子词，查成整数 id',c:'var(--dim)'},
+  {n:'②',t:'Embedding + 位置编码',d:'查 W_E 得词向量，加 W_P 位置向量',c:'var(--cyan)'},
+  {n:'③',t:'12× Transformer Block',d:'Attention 混上下文 + MLP 加工特征',c:'var(--phos)'},
+  {n:'④',t:'LM Head',d:'最后位置向量 → 50257 维 logits',c:'var(--amber)'},
+  {n:'⑤',t:'Softmax',d:'logits → 词表上的概率分布',c:'var(--violet)'},
+  {n:'⑥',t:'采样',d:'temperature / top-k / top-p 选一个词',c:'var(--pink)'},
+];
+(function(){
+  const box=document.getElementById('flow');
+  const steps=FLOW.map((s,i)=>{
+    const d=document.createElement('div');d.className='fstep';d.style.setProperty('--c',s.c);
+    d.innerHTML=`<div class="fn">${s.n}</div><div class="ft">${s.t}</div><div class="fd">${s.d}</div>`;
+    box.appendChild(d);
+    if(i<FLOW.length-1){const a=document.createElement('div');a.className='farrow';a.innerHTML='<span>→</span>';box.appendChild(a);}
+    return d;
+  });
+
+  // "token 旅程"：发光 chip 沿 6 站飞行,末站弹出"下一个词"再回起点
+  const svg=GX.overlay(box);
+  const chip=GX.svgEl('circle',{r:7,fill:'var(--phos)',opacity:0,filter:'drop-shadow(0 0 8px rgba(61,255,154,.9))'},svg);
+  const nextTag=document.createElement('div');
+  nextTag.id='flow-next';nextTag.textContent='"大涨" → 拼回句尾';
+  box.appendChild(nextTag);
+
+  const narrow=()=>matchMedia('(max-width:760px)').matches;
+  const tl=gsap.timeline({paused:true,repeat:-1,repeatDelay:1.2});
+  let dirty=false;
+  addEventListener('resize',()=>{dirty=true;});
+
+  function build(){
+    tl.clear(true);
+    const nar=narrow();
+    steps.forEach((st,i)=>{
+      tl.addLabel('s'+i);
+      if(!nar && i>0){
+        const a=GX.center(steps[i-1],box),b=GX.center(st,box);
+        const path=GX.arc(a,b,-0.28);
+        tl.set(chip,{attr:{opacity:1}})
+          .to(chip,{duration:.45,ease:'power1.inOut',motionPath:{path,type:'quadratic'}});
+      }else if(!nar){
+        const p0=GX.center(st,box);
+        tl.set(chip,{x:p0.x,y:p0.y,attr:{opacity:1}});
+      }
+      tl.call(()=>{steps.forEach((s,j)=>s.classList.toggle('lit',j===i));GX.flash(st);})
+        .to({},{duration:.55});
+    });
+    // 末站：弹出"下一个词"，回到起点
+    tl.addLabel('next');
+    tl.call(()=>{
+      const last=steps[steps.length-1];
+      nextTag.style.left=(last.offsetLeft+last.offsetWidth/2-nextTag.offsetWidth/2)+'px';
+      nextTag.style.top=(last.offsetTop-34)+'px';
+    })
+      .to(nextTag,{opacity:1,y:-6,duration:.35,ease:'back.out(2)'})
+      .to({},{duration:.8})
+      .to(nextTag,{opacity:0,y:0,duration:.3});
+    if(!nar){
+      const a=GX.center(steps[steps.length-1],box),b=GX.center(steps[0],box);
+      tl.to(chip,{duration:.8,ease:'power1.inOut',motionPath:{path:GX.arc(a,b,0.18),type:'quadratic'}},'<');
+    }
+    tl.call(()=>{steps.forEach(s=>s.classList.remove('lit'));})
+      .set(chip,{attr:{opacity:0}});
+    const rebuild=()=>{ if(dirty){ dirty=false; build(); tl.play(0); } };
+    tl.eventCallback('onRepeat',rebuild);
+    tl.eventCallback('onStart',rebuild); // 手动 ↺ 重播时坐标已过期则重建
+  }
+  build();
+  GX.controls(document.getElementById('flow-ctl'),tl,{labels:true});
+  GX.autoplayOnVisible(box,tl);
+})();
+
+// ---------- 2. 注意力交互 ----------
+// "苹果的发布会让股价大涨" —— 每个词作为 Query 时，对其它词的注意力分数（说明性数值）
+const TOKENS=['苹果','的','发布会','让','股价','大涨'];
+// scores[i] = 第 i 个词作为 Query 时，对每个词的注意力权重（含自己），和约为 1
+const SCORES={
+  0:[0.05,0.05,0.60,0.05,0.25,0.00], // 苹果 → 发布会/股价（来自笔记的例子）
+  2:[0.30,0.04,0.20,0.04,0.30,0.12], // 发布会 → 苹果/股价
+  4:[0.34,0.03,0.20,0.05,0.18,0.20], // 股价 → 苹果/发布会/大涨
+  5:[0.10,0.02,0.18,0.05,0.55,0.10], // 大涨 → 股价
+  1:[0.50,0.20,0.15,0.05,0.05,0.05], // 的 → 苹果
+  3:[0.15,0.05,0.30,0.20,0.20,0.10], // 让 → 发布会/股价
+};
+const EXPLAIN={
+  0:{t:'"苹果" 在找什么？',h:'它的 Query 扫过所有词的 Key，发现 <b>发布会(0.60)</b> 和 <b>股价(0.25)</b> 最相关，于是大量吸收这两个商业词——"苹果"被染成 <b>商业语境下的公司</b>，而不是水果。'},
+  2:{t:'"发布会" 在找什么？',h:'它回看 <b>苹果(0.30)</b> 和 <b>股价(0.30)</b>——谁开的发布会、影响了什么，把主体和结果都吸收进来。'},
+  4:{t:'"股价" 在找什么？',h:'它关注 <b>苹果(0.34)</b>（谁的股价）、<b>大涨(0.20)</b>（怎么了）、<b>发布会(0.20)</b>（因为什么），把因果串起来。'},
+  5:{t:'"大涨" 在找什么？',h:'强烈指向 <b>股价(0.55)</b>——大涨的是股价。这种"修饰谁"的关系，往往由专门的注意力头负责。'},
+  1:{t:'"的" 在找什么？',h:'虚词信息量低，主要回指 <b>苹果(0.50)</b> 表所属关系，对语义贡献不大。'},
+  3:{t:'"让" 在找什么？',h:'连接动词，关注它连接的两端 <b>发布会(0.30)</b> 和 <b>股价(0.20)</b>，建立"X 让 Y"的结构。'},
+};
+(function(){
+  const demo=document.getElementById('attn-demo');
+  const sent=document.getElementById('sent');
+  const maskCk=document.getElementById('mask-toggle');
+  const tokEls=TOKENS.map((w,i)=>{
+    const el=document.createElement('button');el.type='button';el.className='tok';el.dataset.i=i;
+    el.innerHTML=`<span class="t">${w}</span><span class="score" id="sc${i}"></span>`;
+    sent.appendChild(el);return el;
+  });
+  const svg=GX.overlay(demo);
+  // 预建每个 j 一条弧线 + 3 个粒子(一次创建,只改属性)
+  const arcs=TOKENS.map((_,j)=>GX.svgEl('path',{fill:'none',stroke:'var(--amber)','stroke-linecap':'round',opacity:0},svg));
+  const parts=TOKENS.map(()=>[0,1,2].map(()=>GX.svgEl('circle',{r:2.6,fill:'var(--amber)',opacity:0},svg)));
+  let cur=0, anim=null;
+
+  function stop(){ if(anim){anim.kill();anim=null;} }
+
+  function show(qi){
+    cur=qi;
+    stop();
+    parts.forEach(ps=>ps.forEach(p=>gsap.set(p,{opacity:0})));
+    const sc=SCORES[qi], ex=EXPLAIN[qi], masked=maskCk.checked;
+    const qEl=tokEls[qi];
+    tokEls.forEach((el,j)=>{
+      el.classList.toggle('query',j===qi);
+      const cut = masked && j>qi;
+      const vis = j!==qi && sc[j]>0.001;
+      el.classList.toggle('lit',vis);
+      const s=document.getElementById('sc'+j);
+      s.textContent = vis ? sc[j].toFixed(2) : '';
+      s.classList.toggle('cut', vis&&cut);
+      el.style.opacity = j===qi ? '1' : (cut ? '0.35' : (0.45+sc[j]*0.9).toFixed(2));
+    });
+    document.querySelector('#attn-explain .et').innerHTML=ex.t;
+    document.querySelector('#attn-explain .ep').innerHTML=ex.h + (masked?' <b style="color:var(--amber)">（因果掩码开：右侧的词被剪断，分数实际为 0。）</b>':'');
+
+    // 弧线 + 粒子
+    const q=GX.center(qEl,demo);
+    anim=gsap.timeline();
+    let k=0;
+    TOKENS.forEach((_,j)=>{
+      const a=arcs[j], ps=parts[j];
+      if(j===qi || sc[j]<=0.001){ gsap.set(a,{opacity:0}); ps.forEach(p=>gsap.set(p,{opacity:0})); return; }
+      const b=GX.center(tokEls[j],demo);
+      const up = {x:q.x, y:q.y-18}, upb={x:b.x, y:b.y-18};
+      const d=GX.arc(upb,up, b.x<q.x ? -0.4 : 0.4); // 从相关词 → query,弓向上方天空区
+      a.setAttribute('d',d);
+      const len=a.getTotalLength();
+      const cutIt = masked && j>qi;
+      gsap.set(a,{attr:{'stroke-width':(1+sc[j]*7).toFixed(1)},opacity:0,strokeDasharray:len,strokeDashoffset:len,stroke:cutIt?'#5a6663':'var(--amber)'});
+      const t0=0.08*k++;
+      anim.to(a,{opacity:cutIt?0.35:(0.35+sc[j]*0.65),strokeDashoffset:0,duration:.5,ease:'power2.out'},t0);
+      if(cutIt){
+        // 剪断：描边退回 + 保持灰
+        anim.to(a,{strokeDashoffset:len,opacity:0,duration:.45,ease:'power2.in'},t0+.75);
+      }else if(!GX.reduced()){
+        ps.forEach((p,pi)=>{
+          anim.set(p,{opacity:0},t0+.3+pi*.14)
+              .to(p,{opacity:.95,duration:.05},t0+.3+pi*.14)
+              .to(p,{motionPath:{path:a,alignOrigin:[.5,.5]},duration:.55,ease:'power1.in'},t0+.32+pi*.14)
+              .to(p,{opacity:0,duration:.1},'>-0.08');
+        });
+      }
+    });
+    // query chip"染色"
+    anim.fromTo(qEl,{backgroundColor:'rgba(13,20,19,1)'},
+      {backgroundColor:'rgba(61,255,154,.22)',duration:.9,ease:'power1.inOut',clearProps:'backgroundColor'},.35);
+    if(GX.reduced()) anim.progress(1);
+  }
+  tokEls.forEach(el=>el.addEventListener('click',()=>show(+el.dataset.i)));
+  maskCk.addEventListener('change',()=>show(cur));
+  let rzT=null; // resize 后坐标过期:防抖重画当前 query
+  addEventListener('resize',()=>{stop();clearTimeout(rzT);rzT=setTimeout(()=>show(cur),200);});
+  show(0); // 默认演示"苹果"
+})();
+
+// ---------- 2b. 三次矩阵乘法:可步进四幕舞台 ----------
+(function(){
+  const host=document.getElementById('mm-stage');if(!host)return;
+  const W=660,H=210;
+  const svg=GX.svgEl('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',style:'max-width:660px;height:auto'},host);
+  const C={x:'#8a9e96',q:'#3dff9a',k:'#39d0ff',v:'#ffb13d',o:'#b78cff',ink:'#d8e6e0',dim:'#8a9e96',grid:'#1a2522',line:'#223330'};
+  const cell=(g,x,y,w,h,fill,stroke)=>GX.svgEl('rect',{x,y,width:w,height:h,rx:4,fill,stroke:stroke||C.line,'stroke-width':1},g);
+  const txt=(g,x,y,s,fill,size,anchor)=>{const t=GX.svgEl('text',{x,y,fill:fill||C.ink,'font-size':size||11,'text-anchor':anchor||'middle','dominant-baseline':'middle'},g);t.textContent=s;return t;};
+  const grp=()=>GX.svgEl('g',{opacity:0},svg);
+  const sflash=el=>gsap.fromTo(el,{attr:{'stroke-width':1}},{attr:{'stroke-width':3.5},duration:.16,yoyo:true,repeat:1,ease:'power1.inOut'});
+
+  // ---- 幕① x → W_Q/W_K/W_V ----
+  const g1=grp();
+  txt(g1,72,18,'词向量 x（4 维）',C.dim,11);
+  const XV=[0.8,-0.2,0.5,0.1];
+  const xg=GX.svgEl('g',{},g1);
+  XV.forEach((v,i)=>{cell(xg,30+i*36,30,32,22,'#0d1413');txt(xg,46+i*36,41,v,C.x,10);});
+  const wNames=[['W_Q',C.q],['W_K',C.k],['W_V',C.v]];
+  const wBoxes=wNames.map(([n,c],i)=>{
+    const g=GX.svgEl('g',{},g1);
+    cell(g,250,18+i*62,84,48,'#0d1413',c);
+    txt(g,292,42+i*62,n,c,13);
+    return g;
+  });
+  const OUTV={q:[1.2,0.4],k:[0.3,1.1],v:[0.9,0.7]};
+  const outVecs=['q','k','v'].map((nm,i)=>{
+    const c=C[nm];const g=GX.svgEl('g',{opacity:0},g1);
+    OUTV[nm].forEach((v,j)=>{cell(g,400+j*36,31+i*62,32,22,'#0d1413',c);txt(g,416+j*36,42+i*62,v,c,10);});
+    txt(g,468,42+i*62,nm.toUpperCase(),c,12,'start');
+    return g;
+  });
+  txt(g1,436,18,'三副"眼镜"看出三个向量（各 2 维示意）',C.dim,10.5);
+  const xFly=GX.svgEl('g',{opacity:0},g1); // 飞行的 x 副本
+  cell(xFly,0,0,60,18,'rgba(138,158,150,.18)',C.x);txt(xFly,30,9,'x',C.x,10);
+
+  // ---- 幕② Q·Kᵀ 逐格相乘 ----
+  const g2=grp();
+  txt(g2,120,18,'Q 行 × Kᵀ 列 → 相关度分数',C.dim,11);
+  const QROW=[1.2,0.4];
+  const qCells=QROW.map((v,i)=>{const g=GX.svgEl('g',{},g2);cell(g,40+i*40,44,36,24,'#0d1413',C.q);txt(g,58+i*40,56,v,C.q,10);return g;});
+  txt(g2,78,86,'Q（token"苹果"）',C.dim,9.5);
+  const KT=[[1.0,2.0],[0.5,0.2],[0.1,-0.5]];
+  const KNAMES=['发布会','的','让'];
+  const kCells=KT.map((col,t)=>col.map((v,i)=>{
+    const g=GX.svgEl('g',{},g2);cell(g,190+t*100,36+i*30,36,24,'#0d1413',C.k);txt(g,208+t*100,48+i*30,v,C.k,10);return g;
+  }));
+  KT.forEach((_,t)=>txt(g2,208+t*100,110,'K·'+KNAMES[t],C.dim,9.5));
+  const accT=txt(g2,560,52,'0.00',C.q,20);
+  txt(g2,560,30,'累加器',C.dim,10);
+  const scoreTs=KT.map((_,t)=>txt(g2,208+t*100,132,'',C.ink,11));
+  const SCORES2=[2.0,0.68,-0.08];
+
+  // ---- 幕③ softmax 归一 ----
+  const g3=grp();
+  txt(g3,330,16,'softmax：分数 → 和为 1 的权重',C.dim,11);
+  const BAR_X=180,BW=64;
+  const WGT=[0.71,0.22,0.07];
+  const bars=SCORES2.map((s,t)=>{
+    const h0=Math.max(6,(s+0.5)*46);
+    const r=cell(g3,BAR_X+t*110,150-h0,BW,h0,'rgba(57,208,255,.35)',C.k);
+    txt(g3,BAR_X+t*110+BW/2,166,KNAMES[t],C.dim,10);
+    return {r,h0,t};
+  });
+  const wgtTs=WGT.map((w,t)=>txt(g3,BAR_X+t*110+BW/2,120,'',C.q,11));
+  const sumT=txt(g3,560,90,'',C.q,13);
+
+  // ---- 幕④ 加权抽取 V ----
+  const g4=grp();
+  txt(g4,240,16,'权重 × 各词的 V → 加权求和 = 新的"苹果"',C.dim,11);
+  const VROWS=[[0.9,0.7],[0.1,0.2],[-0.3,0.4]];
+  const vRects=VROWS.map((row,t)=>{
+    const g=GX.svgEl('g',{},g4);
+    row.forEach((v,j)=>{cell(g,60+j*40,40+t*40,36,24,'#0d1413',C.v);txt(g,78+j*40,52+t*40,v,C.v,10);});
+    txt(g4,150,52+t*40,'× '+WGT[t].toFixed(2)+'（'+KNAMES[t]+'）',C.dim,10,'start');
+    return g;
+  });
+  const OUTF=[0.64,0.57];
+  const outG=GX.svgEl('g',{opacity:0},g4);
+  OUTF.forEach((v,j)=>{cell(outG,440+j*44,72,40,28,'rgba(183,140,255,.15)',C.o);txt(outG,460+j*44,86,v,C.o,11);});
+  txt(g4,527,60,'输出向量（吸收上下文后）',C.o,10.5,'middle');
+  const flyChips=VROWS.map(()=>{const g=GX.svgEl('g',{opacity:0},g4);cell(g,0,0,56,16,'rgba(255,177,61,.25)',C.v);return g;});
+
+  // ---- timeline ----
+  const cap=document.getElementById('mm-cap');
+  const CAPS=['① 同一个 x 分别滑过 W_Q / W_K / W_V —— 三副眼镜，看出 Q、K、V 三个向量',
+    '② Q 和每个词的 K 逐维相乘再相加（点积）——右上角累加器在滚动',
+    '③ softmax 把分数"挤压归一"：全变正、总和 = 1，变成注意力权重',
+    '④ 按权重从每个词的 V 里"抽取"内容，叠加成输出——新的"苹果"诞生'];
+  const tl=gsap.timeline({paused:true,onStart(){
+    accT.textContent='0.00'; sumT.textContent='';
+    scoreTs.forEach(t=>t.textContent=''); wgtTs.forEach(t=>t.textContent='');
+  }});
+  const swap=(from,to)=>{ if(from)tl.to(from,{opacity:0,duration:.25}); tl.to(to,{opacity:1,duration:.3},from?'<.1':undefined); };
+  // 幕①
+  tl.addLabel('act1').call(()=>cap.innerHTML=CAPS[0]);
+  swap(null,g1);
+  wNames.forEach((_,i)=>{
+    tl.set(xFly,{opacity:1,x:30,y:36+0})
+      .to(xFly,{x:262,y:33+i*62,duration:.4,ease:'power1.inOut'})
+      .to(xFly,{opacity:0,duration:.15})
+      .to(outVecs[i],{opacity:1,duration:.3},'<');
+  });
+  tl.to({},{duration:.5});
+  // 幕②
+  tl.addLabel('act2').call(()=>cap.innerHTML=CAPS[1]);
+  swap(g1,g2);
+  KT.forEach((col,t)=>{
+    tl.call(()=>{accT.textContent='0.00';});
+    let run=0;
+    col.forEach((kv,i)=>{
+      run+=QROW[i]*kv;
+      const target=run;
+      tl.call(()=>{sflash(qCells[i].querySelector('rect'));sflash(kCells[t][i].querySelector('rect'));})
+        .call(()=>GX.roll(accT,target,{decimals:2,dur:.35}))
+        .to({},{duration:.5});
+    });
+    tl.call(()=>{scoreTs[t].textContent='= '+SCORES2[t].toFixed(2);})
+      .to({},{duration:.35});
+  });
+  // 幕③
+  tl.addLabel('act3').call(()=>cap.innerHTML=CAPS[2]);
+  swap(g2,g3);
+  bars.forEach((b,t)=>{
+    const h1=Math.max(6,WGT[t]*120);
+    tl.to(b.r,{attr:{height:h1,y:150-h1},fill:'rgba(61,255,154,.35)',stroke:C.q,duration:.55,ease:'power2.inOut'},t===0?'+=.2':'<.08')
+      .call(()=>{wgtTs[t].textContent=WGT[t].toFixed(2);wgtTs[t].setAttribute('y',150-h1-10);});
+  });
+  tl.call(()=>{sumT.textContent='Σ = 1.00 ✓';}).to({},{duration:.5});
+  // 幕④
+  tl.addLabel('act4').call(()=>cap.innerHTML=CAPS[3]);
+  swap(g3,g4);
+  VROWS.forEach((_,t)=>{
+    tl.set(flyChips[t],{opacity:WGT[t]*0.9+0.1,x:62,y:44+t*40,scaleX:Math.max(.25,WGT[t])})
+      .to(flyChips[t],{x:444,y:78,duration:.5,ease:'power1.in'},t===0?'+=.1':'<.15')
+      .to(flyChips[t],{opacity:0,duration:.12});
+  });
+  tl.to(outG,{opacity:1,duration:.4}).call(()=>sflash(outG.querySelector('rect')));
+  tl.addLabel('end');
+
+  // 步进(pause 跳转)会跳过 .call(),用 onUpdate 按时间同步字幕
+  const syncCap=t=>{
+    const L=t.labels, time=t.time();
+    let idx=0;['act1','act2','act3','act4'].forEach((n,i)=>{ if(time>=L[n]-.01) idx=i; });
+    if(cap.innerHTML!==CAPS[idx]) cap.innerHTML=CAPS[idx];
+  };
+  GX.controls(document.getElementById('mm-ctl'),tl,{labels:true,onUpdate:syncCap});
+  GX.autoplayOnVisible(host,tl);
+})();
+
+// ---------- 3. Q/K/V ----------
+const QKV=[
+  {l:'Query 查询',s:'我想要什么信息？',c:'var(--phos)',m:'好比你手里的<b>借书单</b>——写着我想找什么主题的书。',a:'"苹果"的 Query：我是水果还是公司？去找食物 / 商业相关的线索。'},
+  {l:'Key 键',s:'我能提供什么标签？',c:'var(--cyan)',m:'好比书架上每本书的<b>书脊标题</b>——别人扫一眼就知道我是讲什么的。',a:'"发布会"的 Key：标签是"商业活动、产品发布"。'},
+  {l:'Value 值',s:'我实际提供的内容？',c:'var(--amber)',m:'好比书的<b>正文内容</b>——被选中后真正被读取、加权混合的东西。',a:'"发布会"的 Value：携带"这是一个商业场景"的实际信息。'},
+];
+(function(){
+  const box=document.getElementById('qkv');
+  box.innerHTML=QKV.map(q=>
+    `<div class="qkvc" style="--c:${q.c}"><div class="ql">${q.l}</div><div class="qs">${q.s}</div>`+
+    `<div class="qmeta">${q.m}</div><div class="qana">例：${q.a}</div></div>`).join('');
+})();
+
+// ---------- 4. 多头:切分 → 各自连线 → 合并 ----------
+(function(){
+  const host=document.getElementById('mh-stage');if(!host)return;
+  const W=680,H=230;
+  const svg=GX.svgEl('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',style:'max-width:680px;height:auto'},host);
+  const HUES=['#3dff9a','#39d0ff','#ffb13d','#b78cff','#ff7eb6','#ff5d5d','#7ee787','#58c4dc','#e3b341','#c297ff','#f78fb3','#9ecbff'];
+  const txt=(x,y,s,fill,size,anchor,parent)=>{const t=GX.svgEl('text',{x,y,fill:fill||'#8a9e96','font-size':size||10,'text-anchor':anchor||'middle','dominant-baseline':'middle','font-family':'"Space Mono",monospace'},parent||svg);t.textContent=s;return t;};
+  const barY=26,barW=576,barX=(W-barW)/2,segW=barW/12;
+  txt(W/2,10,'768 维向量（一个 token）',null,10.5);
+  // 完整长条
+  const whole=GX.svgEl('rect',{x:barX,y:barY,width:barW,height:16,rx:4,fill:'#16211e',stroke:'#223330'},svg);
+  // 12 段
+  const segs=HUES.map((c,i)=>GX.svgEl('rect',{x:barX+i*segW+1,y:barY,width:segW-2,height:16,rx:3,fill:c,opacity:0},svg));
+  const segLbl=txt(W/2,58,'切成 12 段 × 64 维，每段一个"头"',null,10.5);
+  segLbl.setAttribute('opacity',0);
+  // 3 个缩微注意力面板(头1/头5/头9),不同头连不同词对
+  const MINI=[
+    {hi:0,pairs:[[0,2],[1,3]],name:'头1：看"前一个词"'},
+    {hi:4,pairs:[[3,0]],name:'头5：看主语指代'},
+    {hi:8,pairs:[[3,3],[2,3]],name:'头9：看句尾/自身'},
+  ];
+  const MWORDS=['苹果','的','股价','大涨'];
+  const panels=MINI.map((m,pi)=>{
+    const g=GX.svgEl('g',{opacity:0},svg);
+    const px=40+pi*212, py=86;
+    GX.svgEl('rect',{x:px,y:py,width:190,height:96,rx:8,fill:'#0d1413',stroke:HUES[m.hi]},g);
+    txt(px+95,py+14,m.name,HUES[m.hi],9.5,'middle',g);
+    const wxs=MWORDS.map((w,wi)=>{const x=px+30+wi*44;txt(x,py+76,w,'#bcd0c8',10,'middle',g);return x;});
+    const paths=m.pairs.map(([a,b])=>{
+      const d=GX.arc({x:wxs[b],y:py+64},{x:wxs[a],y:py+64}, a===b?0:0.6);
+      return GX.svgEl('path',{d:a===b?`M ${wxs[a]} ${py+64} m -8 0 a 8 8 0 1 1 16 0`:d,fill:'none',stroke:HUES[m.hi],'stroke-width':1.6,opacity:0},g);
+    });
+    return {g,paths};
+  });
+  // 合并后的长条
+  const merged=GX.svgEl('g',{opacity:0},svg);
+  const mergedSegs=HUES.map((c,i)=>GX.svgEl('rect',{x:barX+i*segW+1,y:200,width:segW-2,height:16,rx:3,fill:c,opacity:.9},merged));
+  GX.svgEl('rect',{x:barX-2,y:198,width:barW+4,height:20,rx:5,fill:'none',stroke:'#b78cff','stroke-width':1.4},merged);
+  const mLbl=txt(W/2,192,'拼回 768 维，再乘 W_O 混合 12 个头的发现','#b78cff',10.5);
+  mLbl.setAttribute('opacity',0);
+
+  const cap=document.getElementById('mh-cap');
+  const tl=gsap.timeline({paused:true});
+  tl.addLabel('split').call(()=>cap.textContent='第一拍：768 维切成 12 段，每段 64 维');
+  tl.to(segs,{opacity:.9,duration:.25,stagger:.055,ease:'power1.out'})
+    .to(segLbl,{opacity:1,duration:.3},'<.3');
+  tl.addLabel('attend').call(()=>cap.textContent='第二拍：每个头独立做注意力——连的词对各不相同');
+  panels.forEach((p,i)=>{
+    tl.to(p.g,{opacity:1,duration:.35},i===0?'+=.2':'<.15');
+    p.paths.forEach(path=>{
+      const len=path.getTotalLength();
+      tl.fromTo(path,{strokeDasharray:len,strokeDashoffset:len,opacity:1},{strokeDashoffset:0,duration:.5,ease:'power2.out'},'<.2');
+    });
+  });
+  tl.to({},{duration:.6});
+  tl.addLabel('merge').call(()=>cap.textContent='第三拍：12 段结果拼回一根 768 维长条');
+  tl.to(panels.map(p=>p.g),{opacity:.25,duration:.3})
+    .fromTo(mergedSegs,{y:-60,opacity:0},{y:0,opacity:.9,duration:.4,stagger:.04,ease:'power2.out'},'<')
+    .to(merged,{opacity:1,duration:.2},'<')
+    .to(mLbl,{opacity:1,duration:.3});
+  tl.addLabel('end');
+
+  GX.controls(document.getElementById('mh-ctl'),tl,{labels:true});
+  GX.autoplayOnVisible(host,tl);
+})();
+
+// ---------- 5b. MLP 档案墙 ----------
+// 24 个抽样"特征探测器"：rel=true 是和"商业语境苹果"相关的、会被点亮并存活；rel=false 不相关、被 GELU 掐掉
+const DRAWERS=[
+  {n:'科技公司',rel:true},{n:'手机制造商',rel:true},{n:'库克 CEO',rel:true},{n:'总部库比蒂诺',rel:true},
+  {n:'纳斯达克上市',rel:true},{n:'iPhone',rel:true},{n:'市值万亿',rel:true},{n:'消费电子',rel:true},
+  {n:'品牌溢价',rel:true},{n:'供应链',rel:true},{n:'乔布斯创立',rel:true},{n:'生态系统',rel:true},
+  {n:'水果',rel:false},{n:'能吃',rel:false},{n:'红色/绿色',rel:false},{n:'维生素',rel:false},
+  {n:'果园',rel:false},{n:'甜的',rel:false},{n:'动词',rel:false},{n:'介词',rel:false},
+  {n:'复数形式',rel:false},{n:'押韵',rel:false},{n:'大写字母',rel:false},{n:'拼写',rel:false},
+];
+(function(){
+  const wall=document.getElementById('mlp-drawers');
+  const btn=document.getElementById('mlp-run');
+  const step=document.getElementById('mlp-step');
+  const gtag=document.getElementById('mlp-gelutag');
+  const outv=document.getElementById('mlp-outv');
+  const outCard=document.getElementById('mlp-out');
+  const dots=[...document.querySelectorAll('#mlp-dots i')];
+  const els=DRAWERS.map((d,i)=>{
+    const e=document.createElement('div');e.className='drw';e.id='drw'+i;e.textContent=d.n;wall.appendChild(e);return e;
+  });
+  const setDot=n=>dots.forEach((d,i)=>d.classList.toggle('cur',i===n));
+  const tl=gsap.timeline({paused:true,
+    onStart(){ els.forEach(e=>e.classList.remove('on','killed')); gtag.textContent=''; outv.textContent='？';
+      gsap.set(outv,{opacity:1}); outCard.style.borderColor='var(--violet)'; },
+  });
+  // ① 刷卡:抽屉依次点亮
+  tl.addLabel('act1')
+    .call(()=>{ setDot(0); step.innerHTML='① <b style="color:var(--cyan)">刷卡</b>：输入向量进入 3072 维，相关的探测器被点亮…'; });
+  els.forEach((e,i)=>tl.call(()=>e.classList.add('on'),null,0.08+i*0.055));
+  // ② GELU:不相关的 stagger 熄灭
+  tl.addLabel('act2',0.08+els.length*0.055+0.45)
+    .call(()=>{ setDot(1); step.innerHTML='② <b style="color:var(--amber)">GELU 筛选</b>：不相关的探测器被压成 0、关掉…'; gtag.textContent='← GELU：关掉没反应的'; },null,'act2');
+  let ki=0;
+  els.forEach((e,i)=>{ if(!DRAWERS[i].rel){ tl.call(()=>{e.classList.remove('on');e.classList.add('killed');},null,'act2+='+(0.15+(ki++)*0.07)); } });
+  // ③ 综合:输出淡入
+  tl.addLabel('act3','act2+=1.2')
+    .call(()=>{ setDot(2); step.innerHTML='③ <b style="color:var(--violet)">综合</b>：把点亮的事实揉成新的 768 维向量，写回卡片。'; },null,'act3')
+    .set(outv,{opacity:0},'act3')
+    .call(()=>{ outv.textContent='一家叫苹果的科技公司·库克掌管·做手机'; outCard.style.borderColor='var(--phos)'; },null,'act3+=.05')
+    .to(outv,{opacity:1,duration:.6,ease:'power1.inOut'},'act3+=.05')
+    .call(()=>{ btn.textContent='↻ 再走一遍'; });
+  btn.addEventListener('click',()=>{ if(GX.reduced()) tl.timeScale(20); tl.restart(); });
+  GX.controls(document.getElementById('mlp-ctl'),tl,{labels:true});
+})();
+
+// ---------- 6. 输出：最后 token / LM Head / 采样 ----------
+// 基础 logits（说明性）：候选下一个词。LM Head 打分台和温度 demo 共用这套数。
+const CANDS=[
+  {w:'understand',z:3.2},{w:'see',z:2.8},{w:'make',z:2.4},
+  {w:'explore',z:1.9},{w:'learn',z:1.5},{w:'build',z:1.0},
+];
+
+// 6.1a 因果掩码三角矩阵（I love you now 例子）——入场:先全绿,右上角扫过翻面成红
+(function(){
+  const W=['I','love','you','now'];
+  const g=document.getElementById('maskgrid');
+  if(!g) return;
+  g.style.gridTemplateColumns=`auto repeat(${W.length}, 62px)`;
+  g.innerHTML='';
+  const mk=(cls,txt)=>{const d=document.createElement('div');d.className='mg-cell '+cls;d.textContent=txt;g.appendChild(d);return d;};
+  mk('mg-corner','Q＼K');
+  W.forEach(w=>mk('mg-head',w));
+  const maskCells=[]; // {el,i,j}
+  W.forEach((rw,i)=>{
+    mk('mg-row',rw);
+    W.forEach((cw,j)=>{
+      const el=mk('mg-see','✓ 可见');
+      if(j>i) maskCells.push({el,i,j});
+    });
+  });
+  const flip=c=>{ c.el.className='mg-cell mg-mask'; c.el.textContent='✕ −∞'; };
+  const tl=gsap.timeline({paused:true});
+  tl.to({},{duration:.6}); // 先全绿停一拍
+  // 从右上角扫过:按 (i + (W.length-j)) 排序,右上先翻
+  maskCells.sort((a,b)=>(a.i+(W.length-a.j))-(b.i+(W.length-b.j)));
+  maskCells.forEach((c,k)=>{
+    tl.to(c.el,{rotationY:90,duration:.16,ease:'power1.in',onComplete:()=>flip(c)},.6+k*.09)
+      .to(c.el,{rotationY:0,duration:.16,ease:'power1.out'},.76+k*.09);
+  });
+  if(GX.reduced()) maskCells.forEach(flip);
+  else GX.autoplayOnVisible(g,tl);
+
+  // 视野扫描:每个位置依次展开能看到的左侧范围下划线
+  const SENT=['Data','visualization','empowers','users','to'];
+  const box=document.getElementById('lastpick');
+  box.innerHTML='';
+  const lps=[];
+  SENT.forEach((w,i)=>{
+    const sp=document.createElement('span');
+    sp.className='lp'+(i===SENT.length-1?' last':'');
+    sp.innerHTML=w+'<i class="seen"></i>';
+    box.appendChild(sp);lps.push(sp);
+    if(i<SENT.length-1){const a=document.createElement('span');a.className='arrow';a.textContent='·';box.appendChild(a);}
+  });
+  const arr=document.createElement('span');arr.className='arrow';arr.textContent='→';box.appendChild(arr);
+  const nx=document.createElement('span');nx.className='lp';nx.style.cssText='border-style:dashed;color:var(--phos)';nx.textContent='? 下一个词';box.appendChild(nx);
+  const scan=gsap.timeline({paused:true});
+  lps.forEach((lp,i)=>{
+    const seen=lps.slice(0,i+1).map(e=>e.querySelector('.seen'));
+    scan.set(lps.map(e=>e.querySelector('.seen')),{scaleX:0})
+        .to(seen,{scaleX:1,duration:.22,stagger:.07,ease:'power1.out'})
+        .to({},{duration:.5});
+  });
+  scan.to({},{duration:.6}); // 最后一个位置的全范围下划线多停一会
+  if(!GX.reduced()) GX.autoplayOnVisible(box,scan);
+  else lps.forEach(e=>e.querySelector('.seen').style.transform='scaleX(1)');
+})();
+
+// 6.2a 点积小例子：逐对高亮乘加 + 累加器滚动 + 按分排序
+(function(){
+  const H=[0.85,0.05,0.10];
+  const WORDS=[
+    {w:'苹果(公司)',v:[0.9,0.1,0.0]},
+    {w:'发布',     v:[0.8,0.0,0.3]},
+    {w:'banana',  v:[0.0,0.9,0.0]},
+    {w:'吃',       v:[0.0,0.3,0.9]},
+  ];
+  const dot=v=>v.reduce((s,x,i)=>s+x*H[i],0);
+  // 网格：表头 + 每个词一行(记录每个数值格,供高亮)
+  const grid=document.getElementById('dotgrid');
+  const gridCells=[]; // gridCells[wi][di]
+  if(grid){
+    grid.innerHTML='';
+    const mk=(cls,txt)=>{const d=document.createElement('div');d.className='dg '+cls;d.textContent=txt;grid.appendChild(d);return d;};
+    mk('h','词＼维度');mk('h','①科技/商业');mk('h','②食物/水果');mk('h','③动作/动词');
+    WORDS.forEach(o=>{
+      mk('w',o.w);
+      gridCells.push(o.v.map(x=>mk('v',x.toFixed(1))));
+    });
+  }
+  // 手算行:按原顺序创建(动画结束后按分数换位)
+  const calc=document.getElementById('dotcalc');
+  if(!calc) return;
+  calc.innerHTML='';
+  const max=Math.max(...WORDS.map(o=>dot(o.v)));
+  const rows=WORDS.map((o,wi)=>{
+    const d=dot(o.v);
+    const row=document.createElement('div');
+    const hi=d>=max*0.7, lo=d<max*0.3;
+    row.className='dcrow '+(hi?'hi':(lo?'lo':''));
+    row.innerHTML=`<span class="dcw">h · ${o.w}</span>`+
+      `<span class="dcm">${o.v.map((x,i)=>`<span id="dt${wi}_${i}">${H[i]}×${x.toFixed(1)}</span>`).join(' + ')}</span>`+
+      `<span class="dcv" id="dv${wi}">= 0.00</span>`;
+    calc.appendChild(row);
+    return {el:row,d,wi,o};
+  });
+  const tl=gsap.timeline({paused:true,
+    onStart(){ rows.forEach(r=>{ document.getElementById('dv'+r.wi).textContent='= 0.00'; gsap.set(r.el,{y:0});
+      r.o.v.forEach((_,di)=>document.getElementById(`dt${r.wi}_${di}`).classList.remove('dchi')); }); },
+  });
+  rows.forEach((r,wi)=>{
+    tl.addLabel('w'+wi);
+    let run=0;
+    r.o.v.forEach((x,di)=>{
+      run+=H[di]*x; const target=run;
+      tl.call(()=>{
+        const term=document.getElementById(`dt${wi}_${di}`);
+        term.classList.add('dchi');
+        if(gridCells[wi]) GX.flash(gridCells[wi][di],'#3dff9a');
+        GX.roll(document.getElementById('dv'+wi),target,{decimals:2,prefix:'= ',dur:.3});
+      }).to({},{duration:.42});
+    });
+    tl.call(()=>{ r.o.v.forEach((_,di)=>document.getElementById(`dt${wi}_${di}`).classList.remove('dchi')); })
+      .to({},{duration:.2});
+  });
+  // 按分数换位排序(位置补间)
+  tl.addLabel('sort');
+  const order=[...rows].sort((a,b)=>b.d-a.d);
+  tl.call(()=>{
+    const rowH=rows[0].el.offsetHeight+7; // gap 7px
+    order.forEach((r,newIdx)=>{
+      const dy=(newIdx-r.wi)*rowH;
+      gsap.to(r.el,{y:dy,duration:.6,ease:'power2.inOut'});
+    });
+  }).to({},{duration:.7});
+  tl.addLabel('end');
+  if(GX.reduced()){
+    // 静态终态:填好数值并按分数排好
+    const rowH=rows[0].el.offsetHeight+7;
+    order.forEach((r,ni)=>{ document.getElementById('dv'+r.wi).textContent='= '+r.d.toFixed(2); gsap.set(r.el,{y:(ni-r.wi)*rowH}); });
+  }
+  GX.controls(document.getElementById('dot-ctl'),tl,{labels:true});
+  if(!GX.reduced()) GX.autoplayOnVisible(calc,tl);
+})();
+
+// 6.2 LM Head 打分台：把候选词的 logit 画成柱（含一个负分的反例）
+(function(){
+  const rows=document.getElementById('sd-rows');
+  // 取几个候选 + 一个明显不搭的词（负 logit），体现"点积可正可负"
+  const SHOW=[...CANDS.slice(0,5), {w:'banana', z:-1.4}];
+  const zmin=-2, zmax=4; // 映射到 0~100% 的范围
+  const pos=z=>((z-zmin)/(zmax-zmin)*100);
+  rows.innerHTML=SHOW.map((c,i)=>{
+    const top=i===0;
+    const col= c.z<0 ? 'var(--red)' : (top?'var(--phos)':'linear-gradient(90deg,var(--cyan),var(--phos))');
+    return `<div class="sdrow${top?' top':''}"><span class="sw">${c.w}</span>`+
+      `<div class="sdtrack"><i id="sd${i}" style="background:${col}"></i></div>`+
+      `<span class="sv">logit <b>${c.z>0?'+':''}${c.z.toFixed(1)}</b></span></div>`;
+  }).join('');
+  // 进入视口做增长动画,且可重播
+  const fill=()=>SHOW.forEach((c,i)=>{document.getElementById('sd'+i).style.width=Math.max(2,pos(c.z)).toFixed(1)+'%';});
+  const zero=()=>SHOW.forEach((c,i)=>{document.getElementById('sd'+i).style.width='0%';});
+  if('IntersectionObserver' in window && !GX.reduced()){
+    const ob=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){fill();ob.disconnect();}});},{threshold:.3});
+    ob.observe(document.querySelector('.scoredesk'));
+  } else fill();
+  const rp=document.getElementById('sd-replay');
+  if(rp) rp.addEventListener('click',()=>{ zero(); setTimeout(fill,60); });
+})();
+
+// 6.3 温度采样
+(function(){
+  const tempEl=document.getElementById('temp'),tv=document.getElementById('tempv'),
+        mode=document.getElementById('tempmode'),bars=document.getElementById('bars');
+  bars.innerHTML=CANDS.map((c,i)=>
+    `<div class="brow"><span class="bw">${c.w}</span><div class="btrack"><i id="bar${i}"></i></div><span class="bp" id="bp${i}"></span></div>`).join('');
+  function softmaxT(T){
+    const zs=CANDS.map(c=>Math.exp(c.z/T));
+    const sum=zs.reduce((a,b)=>a+b,0);
+    return zs.map(z=>z/sum);
+  }
+  function render(){
+    const T=parseFloat(tempEl.value);
+    tv.textContent=T.toFixed(1);
+    mode.textContent = T<0.7?'保守 · 确定':(T>1.3?'发散 · 有创造力':'保持原分布');
+    mode.style.color = T<0.7?'var(--phos)':(T>1.3?'var(--pink)':'var(--amber)');
+    mode.style.borderColor = mode.style.color;
+    const p=softmaxT(T);
+    p.forEach((v,i)=>{document.getElementById('bar'+i).style.width=(v*100).toFixed(1)+'%';
+      document.getElementById('bp'+i).textContent=(v*100).toFixed(0)+'%';});
+  }
+  tempEl.addEventListener('input',render); render();
+  // 按当前分布采样一次
+  const sbtn=document.getElementById('tsample-btn'), sout=document.getElementById('tsample-out'), shist=document.getElementById('tsample-hist');
+  const hist=[];
+  sbtn.addEventListener('click',()=>{
+    const p=softmaxT(parseFloat(tempEl.value));
+    let r=Math.random(),pick=0;
+    for(let i=0;i<p.length;i++){ r-=p[i]; if(r<=0){pick=i;break;} }
+    sout.textContent='→ "'+CANDS[pick].w+'"';
+    GX.flash(sout);
+    hist.push(CANDS[pick].w);
+    if(hist.length>6) hist.shift();
+    shist.textContent='最近采样：'+hist.join(' · ');
+  });
+})();
+
+// ---------- 7. 自回归 + KV Cache 循环动画 ----------
+(function(){
+  const demo=document.getElementById('ar-demo');if(!demo)return;
+  const BASE=['苹果','的','发布会','让','股价'];
+  const GEN=['大涨','，','投资者','纷纷','点赞'];   // 循环生成 5 步
+  const sentBox=document.getElementById('ar-sent');
+  const logitsBox=document.getElementById('ar-logits');
+  const kvBox=document.getElementById('ar-kv'), nvBox=document.getElementById('ar-naive');
+  const kvCost=document.getElementById('ar-kv-cost'), nvCost=document.getElementById('ar-nv-cost');
+  const TOTAL=BASE.length+GEN.length;
+
+  // 句子 token(一次创建:BASE 显示,GEN 隐藏)
+  const toks=[];
+  [...BASE,...GEN].forEach((w,i)=>{
+    const sp=document.createElement('span');sp.className='art';sp.textContent=w;
+    if(i>=BASE.length){sp.style.display='none';sp.classList.add('new');}
+    sentBox.appendChild(sp);toks.push(sp);
+  });
+  // logits 小柱区(5 根柱,每步随机重排哪根最高)
+  const bars=[0,1,2,3,4].map(()=>{
+    const b=document.createElement('div');b.className='alb';b.style.height='8px';
+    b.innerHTML='<i></i>';logitsBox.appendChild(b);return b;
+  });
+  // KV / 朴素 两排格子
+  const mkCells=box=>[...Array(TOTAL)].map(()=>{
+    const c=document.createElement('div');c.className='kvc';c.textContent='·';box.appendChild(c);return c;
+  });
+  const kvCells=mkCells(kvBox), nvCells=mkCells(nvBox);
+
+  function resetState(){
+    toks.forEach((t,i)=>{t.style.display=i<BASE.length?'':'none';gsap.set(t,{opacity:1,y:0,scale:1});});
+    kvCells.forEach(c=>c.className='kvc');
+    nvCells.forEach(c=>c.className='kvc');
+    bars.forEach(b=>{b.className='alb';b.style.height='8px';b.querySelector('i').textContent='';});
+    kvCost.textContent='0';nvCost.textContent='0';
+  }
+
+  const tl=gsap.timeline({paused:true,repeat:-1,repeatDelay:1.6,onStart:resetState,onRepeat:resetState});
+  // Prefill:BASE 的格子一次性点亮
+  tl.addLabel('prefill')
+    .call(()=>{kvCost.textContent=String(BASE.length);nvCost.textContent=String(BASE.length);});
+  BASE.forEach((_,i)=>{
+    tl.call(()=>{kvCells[i].classList.add('on');kvCells[i].textContent='K';
+                 nvCells[i].classList.add('on');nvCells[i].textContent='K';},null,0.15+i*0.12);
+  });
+  tl.to({},{duration:BASE.length*0.12+0.5});
+  // Decode 循环:每步弹出新 token
+  GEN.forEach((w,s)=>{
+    const idx=BASE.length+s, n=idx+1;
+    tl.addLabel('step'+(s+1));
+    // logits 柱起伏,winner 是本步的词
+    tl.call(()=>{
+      const win=Math.floor(Math.random()*bars.length);
+      bars.forEach((b,bi)=>{
+        b.classList.toggle('win',bi===win);
+        b.querySelector('i').textContent=bi===win?w:'';
+        gsap.to(b,{height:(bi===win?38:6+Math.random()*18)+'px',duration:.3,ease:'power2.out'});
+      });
+    }).to({},{duration:.45});
+    // 新 token 从 logits 区"弹出",飞落到句尾
+    tl.call(()=>{
+      const t=toks[idx];t.style.display='';
+      gsap.fromTo(t,{opacity:0,y:-26,scale:.6},{opacity:1,y:0,scale:1,duration:.45,ease:'back.out(1.8)'});
+    }).to({},{duration:.5});
+    // KV:只点亮新增一格;朴素:全部重算闪烁
+    tl.call(()=>{
+      kvCells[idx].classList.add('on');kvCells[idx].textContent='K';
+      GX.flash(kvCells[idx]);
+      kvCost.textContent='1';nvCost.textContent=String(n);
+      for(let i=0;i<n;i++){
+        const c=nvCells[i];
+        c.classList.add('re');c.textContent='↻';
+        gsap.delayedCall(.55,()=>{c.classList.remove('re');c.classList.add('on');c.textContent='K';});
+      }
+    }).to({},{duration:.9});
+  });
+  tl.addLabel('end').to({},{duration:.4});
+
+  GX.controls(document.getElementById('ar-ctl'),tl,{labels:true});
+  GX.autoplayOnVisible(demo,tl);
+})();
+
+// ---------- 8. 参数 + 速查表 ----------
+const PARAMS=[
+  {v:'50,257',l:'词表大小'},{v:'768',l:'隐藏维 d_model'},{v:'12',l:'层数'},
+  {v:'12',l:'注意力头'},{v:'64',l:'单头维 d_head'},{v:'3,072',l:'FFN 中间维'},
+];
+document.getElementById('params').innerHTML=PARAMS.map(p=>`<div class="pchip"><b>${p.v}</b><span>${p.l}</span></div>`).join('');
+const SPEC=[
+  ['Token IDs','(n,)'],['Embedding + 位置编码','(n, 768)'],['Q / K / V（单头视角）','(n, 768)'],
+  ['拆成 12 头','(12, n, 64)'],['注意力分数 QKᵀ/√d_h','(12, n, n)'],['Softmax 后权重','(12, n, n)'],
+  ['Attention 输出（拼回）','(n, 768)'],['MLP 中间','(n, 3072)'],['Block 输出','(n, 768)'],
+  ['LM Head logits','(n, 50257)'],['取最后位置 + softmax','(50257,)'],
+];
+document.getElementById('spec').innerHTML=
+  '<tr><th>阶段</th><th>张量形状</th></tr>'+
+  SPEC.map(r=>`<tr><td>${r[0]}</td><td class="v">${r[1]}</td></tr>`).join('');
+</script>
+<script src="../nav.js" data-base=".." data-active="transformer"></script>
+</body>
+</html>
