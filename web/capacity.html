@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>并发容量实战 · 一台 8×H200 到底能扛几个人</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0e0d; --panel:#111816; --panel-2:#0d1413;
+    --ink:#d8e6e0; --dim:#8a9e96;
+    --sans:"Bricolage Grotesque","PingFang SC","Noto Sans SC",sans-serif;
+    --mono:"Space Mono","PingFang SC","Noto Sans SC",monospace;
+    --phos:#3dff9a; --amber:#ffb13d; --cyan:#39d0ff; --violet:#b78cff; --pink:#ff7eb6; --red:#ff5d5d;
+    --line:#223330; --grid:#1a2522;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #102b22 0%, transparent 55%),
+      radial-gradient(900px 500px at 0% 110%, #1a160a 0%, transparent 50%), var(--bg);
+    color:var(--ink); font-family:var(--mono); line-height:1.6; overflow-x:hidden;
+  }
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 1px,transparent 1px 3px);mix-blend-mode:overlay}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 26px}
+  ::selection{background:var(--phos);color:#04140c}
+
+  header{padding:48px 0 8px}
+  .kicker{font-size:12px;letter-spacing:.3em;color:var(--phos);text-transform:uppercase;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--phos);box-shadow:0 0 12px var(--phos);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  h1{font-family:var(--sans);font-weight:800;font-size:clamp(30px,5vw,54px);line-height:1.02;letter-spacing:-.02em;margin:14px 0 12px}
+  h1 em{font-style:normal;color:var(--phos);text-shadow:0 0 30px rgba(61,255,154,.35)}
+  .sub{max-width:800px;color:var(--dim);font-size:14px}
+  .sub b{color:var(--ink);font-weight:400;border-bottom:1px dashed var(--line)}
+
+  section{margin:44px 0}
+  .sectit{font-family:var(--sans);font-weight:800;font-size:clamp(22px,3vw,30px);letter-spacing:-.01em;line-height:1.1;display:flex;align-items:baseline;gap:12px}
+  .sectit .no{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--phos);opacity:.8}
+  .seclead{color:var(--dim);font-size:13.5px;margin:10px 0 0;max-width:780px}
+  .seclead b{color:var(--ink);font-weight:400}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px}
+  .card.glow{border-left:3px solid var(--phos)}
+  .card.cy{border-left:3px solid var(--cyan)} .card.am{border-left:3px solid var(--amber)}
+  .card.rd{border-left:3px solid var(--red)} .card.vi{border-left:3px solid var(--violet)}
+  .card h3{font-family:var(--sans);font-size:17px;font-weight:800;margin-bottom:8px}
+  .card p{font-size:13px;color:#bcd0c8;margin:8px 0}
+  .card p b{color:var(--ink)}
+  code{font-family:var(--mono);background:var(--panel-2);border:1px solid var(--grid);border-radius:4px;padding:1px 6px;font-size:.9em;color:var(--cyan)}
+
+  .callout{background:linear-gradient(180deg,rgba(255,255,255,.025),transparent);border:1px solid var(--line);border-left:3px solid var(--cyan);border-radius:10px;padding:15px 18px;margin-top:16px;font-size:12.5px;color:#bcd0c8;line-height:1.7}
+  .callout b{color:var(--ink)}
+  .callout .ct{font-family:var(--sans);font-weight:800;color:var(--cyan);font-size:13px;margin-bottom:5px;display:block}
+
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+  @media(max-width:760px){.twocol{grid-template-columns:1fr}}
+  .half{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .half.bad{border-left:3px solid var(--red)} .half.good{border-left:3px solid var(--phos)}
+  .half h4{font-family:var(--sans);font-size:15px;font-weight:800;margin-bottom:4px}
+  .half .tagline{font-size:11px;color:var(--dim);margin-bottom:10px}
+  .half p{font-size:12.5px;color:#bcd0c8;line-height:1.6}
+  .half.bad h4{color:var(--red)} .half.good h4{color:var(--phos)}
+
+  table.spec{width:100%;border-collapse:collapse;margin-top:16px;font-size:12.5px}
+  table.spec th,table.spec td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.spec th{color:var(--dim);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;font-weight:700}
+  table.spec td:first-child{color:#bcd0c8}
+  table.spec td.v{color:var(--cyan);font-family:var(--mono);white-space:nowrap}
+  table.spec tr:hover td{background:rgba(61,255,154,.04)}
+
+  /* 启动命令注解块（同 sglang 页） */
+  .launch{background:#070b0a;border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-top:18px;overflow-x:auto}
+  .launch .lc-head{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  .launch .lc-head::before{content:"$";color:var(--phos);font-weight:700}
+  .lcmd{font-family:var(--mono);font-size:12.5px;line-height:1.5;min-width:520px}
+  .lcrow{display:grid;grid-template-columns:minmax(240px,auto) 1fr;gap:14px;padding:5px 0;border-top:1px dashed transparent;transition:border-color .15s,background-color .15s;cursor:default}
+  .lcrow:hover{border-top-color:var(--grid);background:rgba(61,255,154,.03)}
+  .lcrow .arg{white-space:pre;color:var(--ink)}
+  .lcrow .arg .flag{color:var(--cyan)} .lcrow .arg .val{color:var(--amber)} .lcrow .arg .base{color:var(--phos)}
+  .lcrow .ann{font-size:11px;color:var(--dim);line-height:1.5;align-self:center}
+  .lcrow .ann b{color:#bcd0c8;font-weight:400}
+  .lcrow.hot{background:rgba(255,93,93,.05)}
+  .lcrow.hot .ann::before{content:"⚠ ";color:var(--red)}
+  @media(max-width:640px){
+    .lcmd{min-width:0}
+    .lcrow{grid-template-columns:1fr;gap:3px;border-top:1px dashed var(--grid)}
+    .lcrow .arg{white-space:pre-wrap}
+  }
+
+  /* ===== 证据链 ===== */
+  .evchain{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:18px}
+  @media(max-width:760px){.evchain{grid-template-columns:1fr}}
+  .ev{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;border-top:3px solid var(--c)}
+  .ev .en{font-size:10.5px;letter-spacing:.15em;color:var(--c);font-weight:700;text-transform:uppercase}
+  .ev .et{font-family:var(--sans);font-weight:800;font-size:15px;margin:4px 0 8px}
+  .ev .big{font-family:var(--mono);font-size:26px;font-weight:700;color:var(--c);line-height:1.1;margin:6px 0}
+  .ev .big small{font-size:12px;color:var(--dim);font-weight:400}
+  .ev .em{font-size:12px;color:#bcd0c8;line-height:1.6}
+  .ev .em b{color:var(--ink)}
+  .ev .verdict{margin-top:10px;padding-top:9px;border-top:1px dashed var(--grid);font-size:11.5px;color:var(--dim)}
+  .ev .verdict b{color:var(--c)}
+
+  /* ===== 显存瀑布 ===== */
+  .memfall{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px}
+  .memrow{display:grid;grid-template-columns:150px 1fr 90px;gap:12px;align-items:center;margin:9px 0;font-size:12px}
+  @media(max-width:640px){.memrow{grid-template-columns:100px 1fr 76px;font-size:11px}}
+  .memrow .ml{color:var(--dim);text-align:right}
+  .memrow .mv{font-family:var(--mono);color:var(--ink);text-align:right;white-space:nowrap}
+  .membar{height:22px;background:#0a100e;border:1px solid var(--grid);border-radius:6px;overflow:hidden;position:relative}
+  .membar i{position:absolute;top:0;bottom:0;left:0;border-radius:5px 0 0 5px}
+  .memnote{font-size:11px;color:var(--dim);margin-top:12px;line-height:1.6}
+  .memnote b{color:var(--ink)}
+
+  /* ===== 并发计算器 ===== */
+  .calc{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px;margin-top:18px}
+  .calc .hint{font-size:12px;color:var(--dim);margin-bottom:16px}
+  .calc .hint b{color:var(--phos)}
+  .sliders{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:700px){.sliders{grid-template-columns:1fr}}
+  .sl{background:var(--panel-2);border:1px solid var(--grid);border-radius:10px;padding:14px 16px}
+  .sl label{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:#bcd0c8;margin-bottom:8px}
+  .sl label b{font-family:var(--mono);font-size:16px;color:var(--cyan)}
+  .sl input[type=range]{width:100%;accent-color:var(--phos);cursor:pointer}
+  .sl .slnote{font-size:10.5px;color:var(--dim);margin-top:6px;line-height:1.5}
+  .poolviz{margin-top:20px}
+  .poolbar{display:flex;height:44px;border-radius:9px;overflow:hidden;background:#0a100e;border:1px solid var(--grid)}
+  .poolbar .reqblk{display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#04140c;
+    border-right:2px solid #0a100e;min-width:0;overflow:hidden;white-space:nowrap;transition:width .25s ease}
+  .poolbar .leftover{flex:1;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--dim)}
+  .calcres{display:flex;gap:28px;flex-wrap:wrap;margin-top:16px;font-size:12px;color:var(--dim);align-items:baseline}
+  .calcres b{font-size:30px;font-family:var(--mono);color:var(--phos);line-height:1}
+  .calcres .cr2 b{font-size:18px;color:var(--cyan)}
+  .calcres .cr2.warn b{color:var(--red)}
+  .calcpresets{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .preset{font-family:var(--mono);font-size:11px;padding:6px 11px;border-radius:6px;cursor:pointer;
+    background:var(--panel-2);border:1px solid var(--line);color:#bcd0c8;transition:.15s}
+  .preset:hover{border-color:var(--phos);color:var(--phos)}
+
+  /* ===== TTFT 拆解 ===== */
+  .ttftbar{display:flex;height:34px;border-radius:8px;overflow:hidden;border:1px solid var(--grid);margin-top:14px}
+  .ttftbar span{display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;color:#04140c}
+  .ttftlegend{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:var(--dim)}
+  .ttftlegend i{width:11px;height:11px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:-1px}
+
+  /* 优化清单 */
+  .fixlist{counter-reset:fix;margin-top:18px;display:flex;flex-direction:column;gap:12px}
+  .fix{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px 16px 58px;position:relative}
+  .fix::before{counter-increment:fix;content:counter(fix);position:absolute;left:16px;top:16px;width:28px;height:28px;
+    border-radius:8px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:14px;
+    background:color-mix(in srgb,var(--c) 16%,var(--panel-2));color:var(--c);border:1px solid var(--c)}
+  .fix .ft{font-family:var(--sans);font-weight:800;font-size:14.5px;color:var(--ink)}
+  .fix .ft .gain{font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--c);border:1px solid color-mix(in srgb,var(--c) 40%,transparent);border-radius:4px;padding:2px 7px;margin-left:8px;vertical-align:1px}
+  .fix .fb{font-size:12.5px;color:#bcd0c8;margin-top:5px;line-height:1.65}
+  .fix .fb b{color:var(--ink)}
+
+  .takeaway{background:var(--panel);border:1px solid var(--phos);border-radius:14px;padding:26px;margin-top:18px;text-align:center}
+  .takeaway p{font-size:15px;color:var(--ink);line-height:1.7;max-width:820px;margin:0 auto}
+  .takeaway p em{font-style:normal;color:var(--phos)}
+
+  footer{border-top:1px solid var(--line);margin-top:48px;padding:24px 0 64px;color:var(--dim);font-size:12px}
+  footer b{color:var(--phos)} footer a{color:var(--cyan);text-decoration:none}
+  footer a:hover{text-decoration:underline}
+
+  @media (prefers-reduced-motion: reduce){
+    .kicker .dot{animation:none}
+    *,*::before,*::after{transition-duration:.01ms !important;animation-duration:.01ms !important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker"><span class="dot"></span> GPU EXPLAINER · 并发容量实战</div>
+    <h1>GPU 全跑满，为什么还排队？<br><em>一台 8×H200 的并发账本</em></h1>
+    <p class="sub">这是一次<b>真实排障的完整复盘</b>：一台 p5e.48xlarge（8×H200，1128GB 显存）用 SGLang 部署 GLM 大模型 FP8，供 10+ 人日常编码 agent 使用——结果 <b>6 个并发就顶满，第 7 个开始排队，P95 TTFT 高达 20 秒</b>。本页沿着当时的排查路径走一遍：GPU 利用率 → 引擎指标 → 缓存统计 → 启动日志，最后落到一个结论：<b>并发上限 = KV cache 池容量 ÷ 单请求上下文占用</b>。前面的 <b>SGLang 引擎页</b>讲原理，这一页讲这些原理在生产上怎么"算账"。</p>
+    <div style="margin-top:14px"><span class="gx-badge">附：可交互并发计算器</span></div>
+  </header>
+
+  <!-- ===== 01 现象与部署 ===== -->
+  <section id="sec-setup">
+    <div class="sectit"><span class="no">01</span>现象与部署配置</div>
+    <p class="seclead">硬件不弱、量化拉满（FP8 权重 + FP8 KV cache）、缓存也开了三级 HiCache——但用户的体感是"<b>10 个人一起用就有人要等</b>"。先看启动命令，每一行右边注明它在这次排障里扮演的角色：</p>
+
+    <div class="launch">
+      <div class="lc-head">docker run … sglang serve（节选关键参数）</div>
+      <div class="lcmd" id="lcmd"></div>
+    </div>
+
+    <div class="callout">
+      <span class="ct">直觉会骗人：这套配置"看上去"没毛病</span>
+      量化已经是 FP8 权重 + FP8 KV（各省一半显存），HiCache 三级缓存也开了,mem-fraction 0.88 也是常规值。<b>没有一个参数写错了</b>——问题出在这些参数组合起来之后,<b>容量的账没人算过</b>:307200 的上下文上限 × 重上下文 agent 负载,意味着单个请求就能吃掉巨量 KV。往下看证据链。
+    </div>
+  </section>
+
+  <!-- ===== 02 证据链 ===== -->
+  <section id="sec-evidence">
+    <div class="sectit"><span class="no">02</span>四步证据链：从"感觉卡"到"定位到字节"</div>
+    <p class="seclead">排障的顺序很重要：<b>每一步先排除一层,再往下钻</b>。四个证据分别来自 GPU 监控、<code>/metrics</code> 接口、网关 token 统计、启动日志——凑齐后结论唯一。</p>
+
+    <div class="evchain">
+      <div class="ev" style="--c:var(--cyan)">
+        <div class="en">证据 ① · GPU 监控</div>
+        <div class="et">8 卡利用率全程贴顶</div>
+        <div class="big">≈100% <small>持续</small></div>
+        <div class="em">偶发掉到 20%~80% 的毛刺可忽略（调度间隙）。关键信息：请求<b>确实都进到了引擎</b>，机器是真的忙。</div>
+        <div class="verdict">排除 → <b>网关/代理层限流</b>。瓶颈在引擎内部。</div>
+      </div>
+      <div class="ev" style="--c:var(--amber)">
+        <div class="en">证据 ② · /metrics 实时指标</div>
+        <div class="et">5 个请求吃掉 76% 的 KV 池</div>
+        <div class="big">token_usage 0.76 <small>@ 5 req</small></div>
+        <div class="em"><code>num_running_reqs=5</code>、<code>num_queue_reqs=1</code>——才 5 个在跑,池子已用 76%,第 6 个已在排队。平均<b>每个请求占整池 ~15%</b>。</div>
+        <div class="verdict">锁定 → <b>KV cache 容量瓶颈</b>,不是算力调度问题。</div>
+      </div>
+      <div class="ev" style="--c:var(--phos)">
+        <div class="en">证据 ③ · 网关 12h Token 统计</div>
+        <div class="et">前缀缓存其实工作得极好</div>
+        <div class="big">95.5% <small>命中率</small></div>
+        <div class="em">输入 494.29M token,其中 472.23M 命中缓存。注意:<code>/metrics</code> 里的 <code>cache_hit_rate</code> gauge 读数是 0——<b>口径不可信,要用累计量对账</b>。输入:输出 ≈ 113:1,典型重上下文 agent 负载。</div>
+        <div class="verdict">排除 → <b>缓存失效</b>。也意味着这里已无优化空间。</div>
+      </div>
+      <div class="ev" style="--c:var(--red)">
+        <div class="en">证据 ④ · 启动日志</div>
+        <div class="et">池子总共就这么大</div>
+        <div class="big">618,496 <small>token</small></div>
+        <div class="em"><code>max_total_num_tokens=618496</code>,同时 <code>max_running_requests=2048</code>（远不是限制）、<code>available_gpu_mem=6.10GB</code>（每卡仅剩 6GB 余量）。</div>
+        <div class="verdict">定论 → 618496 × 0.76 ÷ 5 ≈ <b>单请求 94K token,上限 6.5 并发</b>。</div>
+      </div>
+    </div>
+
+    <div class="callout" style="border-left-color:var(--amber)">
+      <span class="ct" style="color:var(--amber)">高峰期驾驶舱快照（后来补的仪表盘）</span>
+      KV 池 78% · <b>运行 6 个 / 等待 10 个</b>（排队的比在跑的还多）· TTFT P95 = 19.2s · <b>ITL P95 = 33.7ms</b>。最后一个数字是好消息:请求一旦进池子,decode 很流畅(~30 token/s)。<b>用户的痛苦 100% 来自"进不去",而不是"进去了慢"</b>——所以优化方向唯一:腾容量。
+    </div>
+  </section>
+
+  <!-- ===== 03 max_total_num_tokens 怎么来的 ===== -->
+  <section id="sec-mem">
+    <div class="sectit"><span class="no">03</span>618496 这个数是谁定的？——SGLang 的显存盘点</div>
+    <p class="seclead"><code>max_total_num_tokens</code> 不是默认值,是 SGLang 启动时<b>现场算出来的</b>:一道减法（显存预算 − 权重 − 激活）加一道除法（÷ 每 token 的 KV 字节数）。示意如下（宽度为示意比例,权重/激活的精确值以实际日志为准）:</p>
+
+    <div class="memfall" id="memfall"></div>
+
+    <div class="twocol">
+      <div class="half good">
+        <h4>能把池子变大的参数</h4>
+        <div class="tagline">这次部署里还剩的杠杆</div>
+        <p>· <code>--mem-fraction-static</code> ↑ — 预算变大,池子线性变大（唯一可动,但每卡只剩 6.1GB,只能 0.88→0.90 小步走）<br>
+        · 权重精度 — 已 FP8,拉满<br>
+        · <code>--kv-cache-dtype fp8_e4m3</code> — 已 FP8,每 token KV 减半,拉满</p>
+      </div>
+      <div class="half bad">
+        <h4>不影响池子大小的参数</h4>
+        <div class="tagline">容易误会的两个</div>
+        <p>· <code>--context-length</code> — 只影响调度准入和单请求上限,<b>不改变池子容量</b><br>
+        · <code>--hicache-size 128</code> — 那是 <b>host 内存（CPU RAM）</b>里的二级缓存,不占显存,与 618496 无关</p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <span class="ct">每 token 的 KV 有多大？</span>
+      <b>每 token KV 字节数 = 层数 × 2（K 和 V）× KV 头数 × head_dim × 每元素字节数</b>。FP8 每元素 1 字节,BF16 是 2 字节——这就是 KV 量化直接让池子翻倍的原因。TP=8 时这份 KV 切到 8 卡,但 <code>max_total_num_tokens</code> 统计的是全局总量。想精确验证:启动日志里 <code>KV Cache is allocated. #tokens: …, K size: … GB, V size: … GB</code>,拿 (K+V) 的 GB ÷ token 数即得。
+    </div>
+  </section>
+
+  <!-- ===== 04 计算器 ===== -->
+  <section id="sec-calc">
+    <div class="sectit"><span class="no">04</span>并发账本计算器 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">整次排障最后收敛成一个除法:<b>并发上限 ≈ KV 池容量 ÷ 平均单请求上下文占用</b>。拖两个滑块感受一下——为什么"降低人均上下文"是不花钱版的扩容,而调 mem-fraction 只是小修小补:</p>
+
+    <div class="calc" id="calc">
+      <div class="hint">&gt;_ 左滑块 = 用户的使用习惯（会话多长）,右滑块 = 服务端显存水位。下面的池子条按<b>本案例实测值</b>初始化:0.88 水位、人均 94K。</div>
+      <div class="sliders">
+        <div class="sl">
+          <label>平均单请求上下文占用 <b id="v-avg">94K</b></label>
+          <input type="range" id="in-avg" min="8" max="300" step="2" value="94">
+          <div class="slnote">重度编码 agent 会话普遍 60~150K;勤 compact / 勤开新会话能压到 32~48K;一个 300K 满长请求 ≈ 半个池子。</div>
+        </div>
+        <div class="sl">
+          <label>--mem-fraction-static <b id="v-mf">0.88</b></label>
+          <input type="range" id="in-mf" min="0.85" max="0.93" step="0.01" value="0.88">
+          <div class="slnote">按"0.88 时池子 618,496"线性外推(近似)。本案例每卡仅剩 6.1GB,实际提到 0.93 会 OOM——超过 0.91 请当作纸面数字看。</div>
+        </div>
+      </div>
+      <div class="poolviz">
+        <div class="poolbar" id="poolbar"></div>
+        <div class="calcres">
+          <div>理论并发上限 <b id="r-conc">6</b></div>
+          <div class="cr2">KV 池容量 <b id="r-pool">618K</b> token</div>
+          <div class="cr2" id="r-wait-wrap">10 人团队需等待 <b id="r-wait">4</b> 人</div>
+        </div>
+      </div>
+      <div class="calcpresets">
+        <button class="preset" data-avg="94"  data-mf="0.88">本案例现状 → 6 并发</button>
+        <button class="preset" data-avg="94"  data-mf="0.90">只调 mem-fraction → 小赚</button>
+        <button class="preset" data-avg="48"  data-mf="0.88">人均压到 48K → 翻倍</button>
+        <button class="preset" data-avg="32"  data-mf="0.90">双管齐下 → 20+</button>
+      </div>
+    </div>
+
+    <div class="callout" style="border-left-color:var(--pink)">
+      <span class="ct" style="color:var(--pink)">并发上来之后,下一个瓶颈立刻换人</span>
+      GPU 本来就贴着 100%。并发从 6 放到 15+,排队消失了,但 decode 算力是大家分的——<b>每个人的 token/s 会摊薄</b>。好在本案例负载是 113:1 的重输入轻输出、且 95% 的 prefill 被缓存吃掉,体感恶化有限。但要"并发和单人速度都不降",最终答案只有加机器。
+    </div>
+  </section>
+
+  <!-- ===== 05 TTFT ===== -->
+  <section id="sec-ttft">
+    <div class="sectit"><span class="no">05</span>P95 TTFT = 20 秒意味着什么</div>
+    <p class="seclead">TTFT（Time To First Token,首字延迟）是把容量问题翻译成<b>用户体感</b>的那座桥。P95=20s 的意思是:<b>每 20 个请求就有 1 个,从发出到看到第一个字等了超过 20 秒</b>。这 20 秒花在哪,可以精确拆开:</p>
+
+    <div class="card am">
+      <h3>TTFT = 排队时间 + prefill 时间</h3>
+      <div class="ttftbar">
+        <span style="flex:19;background:linear-gradient(90deg,var(--red),#ff8a8a)">排队等 KV 池腾位置 ≈ 19s+</span>
+        <span style="flex:1;background:var(--phos);min-width:70px">prefill &lt;1s</span>
+      </div>
+      <div class="ttftlegend">
+        <span><i style="background:var(--red)"></i>池子满 → 调度器不放行,请求在 waiting 队列干等</span>
+        <span><i style="background:var(--phos)"></i>95.5% 前缀命中 → 94K 会话只需新算 ~4K token,H200×8 上亚秒级</span>
+      </div>
+      <p style="margin-top:12px">所以这 20 秒<b>几乎全是排队</b>——它不是一个新问题,而是"6.5 并发上限"在用户侧的直接投影。反过来,ITL P95 = 33.7ms 证明进了池子体验就很好。</p>
+    </div>
+
+    <table class="spec">
+      <tr><th>怎么用这些指标</th><th>做法</th></tr>
+      <tr><td>拿到 TTFT</td><td class="v">curl -s :8000/metrics | grep time_to_first_token</td></tr>
+      <tr><td>Grafana P95</td><td class="v">histogram_quantile(0.95, sum(rate(sglang:time_to_first_token_seconds_bucket[5m])) by (le))</td></tr>
+      <tr><td>判断排队占比</td><td>TTFT 曲线与 <span class="v">num_queue_reqs</span> 叠一张图:queue&gt;0 的时段 TTFT 飙升 = 排队铁证</td></tr>
+      <tr><td>区分"全天不够"还是"高峰不够"</td><td>P50 也高 → 容量缺口大,直接加机器;P50 低、P95 高 → 只有高峰挤爆,行为优化可能就够</td></tr>
+      <tr><td>验收标准</td><td>给团队定一个数,例如 <b style="color:var(--phos)">P95 TTFT &lt; 3s</b>,每做一项优化看这一条曲线,不再凭体感争论</td></tr>
+    </table>
+  </section>
+
+  <!-- ===== 06 修复清单 ===== -->
+  <section id="sec-fix">
+    <div class="sectit"><span class="no">06</span>优化清单（按性价比排序）</div>
+    <p class="seclead">诊断收敛后,能做的事其实不多——量化拉满、缓存命中 95%、调度参数无瓶颈,<b>没有哪个配置项能凭空翻倍 KV 池</b>。按投入产出排:</p>
+
+    <div class="fixlist">
+      <div class="fix" style="--c:var(--phos)">
+        <div class="ft">压低人均上下文占用 <span class="gain">6 → 13+ 并发 · 零成本</span></div>
+        <div class="fb">并发随人均占用<b>线性</b>提升:94K→48K 直接翻倍。手段全在客户端侧:<b>更积极的 compact</b>（上下文到 60K 就压缩,别等逼近上限）、<b>勤开新会话</b>（一个会话干一件事）、少用"整仓库读进上下文"的用法、网关对单请求输入做软限制（&gt;150K 告警）。</div>
+      </div>
+      <div class="fix" style="--c:var(--cyan)">
+        <div class="ft">--mem-fraction-static 0.88 → 0.90 <span class="gain">6 → ~8 并发</span></div>
+        <div class="fb">每卡挤 3~4GB 给 KV 池。<b>不能贪</b>:日志显示每卡仅剩 6.1GB,提到 0.93 会 OOM。改完对比重启前后的 <code>max_total_num_tokens</code>,再用满长请求压测确认。</div>
+      </div>
+      <div class="fix" style="--c:var(--amber)">
+        <div class="ft">--context-length 307200 → 131072 <span class="gain">防垄断 · 公平性</span></div>
+        <div class="fb">作用不是扩池子,是<b>禁止单个请求吃掉半池 KV</b>——300K 上限下,一个满长请求就能让所有人一起卡。降到 128K 后超长会话被迫在客户端 compact。前提:与业务确认没有真 &gt;128K 的场景。</div>
+      </div>
+      <div class="fix" style="--c:var(--red)">
+        <div class="ft">加第二台机器 <span class="gain">根治 · 15~20+ 并发</span></div>
+        <div class="fb">要支撑 15~20 并发且单人速度不降,单机没有免费午餐。<b>关键细节:负载均衡必须做会话亲和性路由</b>（同一会话固定同一台）——随机打散会把 95.5% 的 prefix cache 命中率打没,prefill 压力暴涨,等于花两台机器的钱买不到两倍容量。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 07 方法论速查 ===== -->
+  <section id="sec-cheat">
+    <div class="sectit"><span class="no">07</span>方法论速查:下次再遇到"并发不够"</div>
+    <table class="spec">
+      <tr><th>症状 / 读数</th><th>指向</th></tr>
+      <tr><td>GPU 利用率低 + 用户在等</td><td>请求没进引擎 → 查网关、nginx worker、客户端连接池</td></tr>
+      <tr><td>GPU 贴 100% + <span class="v">token_usage</span> 高 + queue 堆积</td><td><b style="color:var(--red)">KV 容量瓶颈</b>（本案例）→ 算账:池容量 ÷ 人均占用</td></tr>
+      <tr><td>running 卡在固定数字、token_usage 却不高</td><td>被 <span class="v">max-running-requests</span> 等并发参数卡住 → 显式放开</td></tr>
+      <tr><td>queue≈0 但并发一多人人变慢</td><td>纯吞吐瓶颈 → 并行策略（EP/TBO）、投机解码、加副本</td></tr>
+      <tr><td><span class="v">cache_hit_rate</span> gauge 显示 0%</td><td>先别信,用累计命中 token 对账;或看逐请求日志 <span class="v">#cached-token</span></td></tr>
+      <tr><td>TTFT 高、ITL 低</td><td>痛在"进不去"（排队/容量）,不在"算得慢"</td></tr>
+      <tr><td>TTFT 低、ITL 高</td><td>decode 算力不足或 CUDA graph 未覆盖大 batch → <span class="v">cuda-graph-max-bs</span></td></tr>
+      <tr><td>有人发长请求时全员卡顿</td><td>chunked prefill 配置、context-length 上限过大(单请求垄断)</td></tr>
+    </table>
+  </section>
+
+  <!-- ===== 总结 ===== -->
+  <section>
+    <div class="takeaway">
+      <p>LLM 服务的并发上限,本质是一道除法:<em>KV 池容量 ÷ 人均上下文占用</em>。<br>
+      GPU 100% 不代表算力瓶颈——先看 <em>token_usage 和 waiting 队列</em>;缓存命中率要<em>用累计量对账</em>,别信瞬时 gauge;
+      TTFT 高 + ITL 低,痛的是"进不去"而不是"算得慢"。<br>
+      配置能挤的都是零头,<em>把分母压小（compact）或把机器加倍</em>,才是数量级的解。</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>并发容量实战页 · 内容来自一次真实的 <b>GLM + SGLang @ p5e.48xlarge（8×H200）</b>生产排障复盘（2026-07）。
+    数字（618496 / 0.76 / 95.5% / 19.2s / 33.7ms 等）均为当时实测读数;计算器为线性近似模型,用于建立直觉,精确容量以 <code>max_total_num_tokens</code> 日志为准。
+    原理背景见 <a href="sglang.html">SGLang 引擎页</a>（RadixAttention / 调度器 / batch）与 <a href="pd.html">PD 分离页</a>。</p>
+  </footer>
+
+</div>
+
+<script src="vendor/gsap.min.js"></script>
+<script src="gx.js"></script>
+<script>
+// ---------- 01 启动命令注解 ----------
+const LCMD=[
+  ['sglang serve','',            '基座命令',0],
+  ['  --model-path /model','base','GLM 大参数量 MoE,FP8 权重(已省一半显存)',0],
+  ['  --tp 8','flag',            '8×H200 张量并行;MoE 也可考虑配 EP,见 SGLang 页 §05',0],
+  ['  --context-length 307200','flag','⚡ 本案主角:300K 上限意味着单请求可吃半个 KV 池',1],
+  ['  --mem-fraction-static 0.88','flag','显存预算比例 → 直接决定 KV 池大小(§03)',1],
+  ['  --kv-cache-dtype fp8_e4m3','flag','KV 也 FP8:每 token 占用减半,池子×2(已拉满)',0],
+  ['  --enable-hierarchical-cache','flag','三级缓存:GPU→CPU RAM→存储;实测 12h 有 460M token 命中 host 层',0],
+  ['  --hicache-size 128','flag', '128GB host 内存缓存——不占显存,别和 KV 池混淆',0],
+  ['  --enable-metrics','flag',   '/metrics 接口——本次排障证据②的来源',0],
+  ['  --enable-cache-report','flag','逐请求 #cached-token 日志——核对缓存命中的真相',0],
+];
+document.getElementById('lcmd').innerHTML=LCMD.map(r=>{
+  const cls=r[1]==='base'?'base':'flag';
+  const parts=r[0].split(' ');
+  const arg=r[1]===''?`<span class="base">${r[0]}</span>`:
+    `<span class="${cls}">${parts.slice(0,-1).join(' ')}</span> <span class="val">${parts.at(-1)}</span>`;
+  return `<div class="lcrow${r[3]?' hot':''}"><div class="arg">${arg}</div><div class="ann">${r[2]}</div></div>`;
+}).join('');
+
+// ---------- 03 显存瀑布(示意比例) ----------
+const MEM=[
+  {l:'每卡总显存',      v:'141 GB',   w:100, c:'var(--grid)',  note:'H200 单卡'},
+  {l:'× mem-fraction 0.88', v:'≈124 GB', w:88,  c:'var(--cyan)',  note:'静态分配预算'},
+  {l:'− FP8 权重(÷8 卡)',  v:'权重切片', w:52,  c:'var(--violet)', note:'TP=8 每卡一片'},
+  {l:'− 激活/CUDA graph',   v:'实测预留', w:44,  c:'var(--amber)',  note:'dummy forward 量出来'},
+  {l:'= KV cache 池',    v:'618,496 tok', w:40, c:'var(--phos)',  note:'÷ 每token KV字节数'},
+];
+document.getElementById('memfall').innerHTML=MEM.map(m=>
+  `<div class="memrow">
+     <div class="ml">${m.l}</div>
+     <div class="membar"><i style="width:${m.w}%;background:color-mix(in srgb,${m.c} 55%,#0a100e);border-right:2px solid ${m.c}"></i></div>
+     <div class="mv">${m.v}</div>
+   </div>`).join('')+
+  `<div class="memnote"><b>盘点顺序</b>:SGLang 启动时先按 mem-fraction 圈预算 → 加载权重实测占用 → 跑一次 dummy forward 量出激活峰值 → <b>剩下的显存全部除以每 token KV 字节数</b>,得到 max_total_num_tokens,再按 --page-size 对齐。所以它是"算出来的",每次改参数/换模型都会变。</div>`;
+
+// ---------- 04 计算器 ----------
+(function(){
+  const BASE_POOL=618496, BASE_MF=0.88;
+  const COLORS=['var(--phos)','var(--cyan)','var(--violet)','var(--amber)','var(--pink)'];
+  const inAvg=document.getElementById('in-avg'), inMf=document.getElementById('in-mf');
+  const vAvg=document.getElementById('v-avg'), vMf=document.getElementById('v-mf');
+  const bar=document.getElementById('poolbar');
+  const rConc=document.getElementById('r-conc'), rPool=document.getElementById('r-pool');
+  const rWait=document.getElementById('r-wait'), rWaitWrap=document.getElementById('r-wait-wrap');
+  const TEAM=10;
+
+  function render(){
+    const avgK=+inAvg.value, mf=+inMf.value;
+    const pool=Math.round(BASE_POOL*mf/BASE_MF);
+    const conc=Math.floor(pool/(avgK*1000));
+    vAvg.textContent=avgK+'K';
+    vMf.textContent=mf.toFixed(2);
+    rPool.textContent=Math.round(pool/1000)+'K';
+    if(window.GX&&!GX.reduced()) GX.roll(rConc,conc,{dur:.35}); else rConc.textContent=conc;
+    const wait=Math.max(0,TEAM-conc);
+    rWait.textContent=wait;
+    rWaitWrap.classList.toggle('warn',wait>0);
+    rWaitWrap.firstChild.textContent=wait>0?`${TEAM} 人团队需等待 `:`${TEAM} 人团队无人等待 ✓ `;
+    // 池子条:最多画 24 块,避免 DOM 爆炸
+    const shown=Math.min(conc,24);
+    const pctPer=(avgK*1000/pool)*100;
+    let html='';
+    for(let i=0;i<shown;i++){
+      const c=COLORS[i%COLORS.length];
+      html+=`<span class="reqblk" style="width:${pctPer}%;background:color-mix(in srgb,${c} 60%,#0a100e);color:${c}">R${i+1}</span>`;
+    }
+    const used=pctPer*shown;
+    if(conc>shown) html+=`<span class="reqblk" style="width:${Math.max(0,100-used)}%;background:#12201b;color:var(--dim)">+${conc-shown} 更多…</span>`;
+    else html+=`<span class="leftover">剩余 ${(100-used).toFixed(0)}% — 装不下第 ${conc+1} 个(整段 ${avgK}K 放不进)</span>`;
+    bar.innerHTML=html;
+  }
+  inAvg.addEventListener('input',render);
+  inMf.addEventListener('input',render);
+  document.querySelectorAll('.preset').forEach(b=>b.addEventListener('click',()=>{
+    inAvg.value=b.dataset.avg; inMf.value=b.dataset.mf; render();
+    if(window.GX) GX.flash(document.getElementById('poolbar'));
+  }));
+  render();
+})();
+</script>
+<script src="../nav.js" data-base=".." data-active="capacity"></script>
+</body>
+</html>

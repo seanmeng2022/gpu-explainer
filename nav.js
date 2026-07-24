@@ -12,6 +12,7 @@
     { id: 'moe', icon: '⧉', label: 'MoE 架构', desc: '稀疏专家 · Router · EP', href: 'web/moe.html' },
     { id: 'sglang', icon: '◊', label: 'SGLang 引擎', desc: 'RadixAttention · 零开销调度', href: 'web/sglang.html' },
     { id: 'pd', icon: '⇹', label: 'PD 分离', desc: 'Prefill/Decode 分池 · KV 传输', href: 'web/pd.html' },
+    { id: 'capacity', icon: '▤', label: '并发容量实战', desc: 'KV 池账本 · TTFT · 排障复盘', href: 'web/capacity.html', live: true },
     { id: 'realtrace', icon: '◉', label: '真实数据流', desc: 'DeepSeek MoE · 实测 trace', href: 'web/index.html', live: true },
     // 例：{ id:'kvcache', icon:'▣', label:'KV Cache', desc:'Decode 显存增长', href:'web/kvcache.html' },
   ];
