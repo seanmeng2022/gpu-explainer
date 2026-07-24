@@ -146,6 +146,50 @@
   .ttftlegend{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:var(--dim)}
   .ttftlegend i{width:11px;height:11px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:-1px}
 
+  /* ===== 调度数据流 ===== */
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin-top:18px}
+  .fstep{flex:1;min-width:118px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 13px;transition:border-color .15s}
+  .fstep:hover{border-color:var(--c)}
+  .fstep .fn{font-size:11px;color:var(--c);font-weight:700;letter-spacing:.1em}
+  .fstep .ft{font-family:var(--sans);font-weight:800;font-size:13.5px;margin:3px 0 4px;color:var(--ink)}
+  .fstep .fd{font-size:11px;color:var(--dim);line-height:1.45}
+  .farrow{display:flex;align-items:center;color:var(--dim);font-size:16px;padding:0 6px}
+  @media(max-width:760px){.farrow{display:none}.flow{gap:8px}.fstep{flex-basis:100%}}
+
+  /* 排队动画 */
+  .schedflow{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-top:18px}
+  .schedflow .hint{font-size:12px;color:var(--dim);margin-bottom:14px}
+  .schedflow .hint b{color:var(--phos)}
+  .sfgrid{display:grid;grid-template-columns:1fr 1.15fr 1.25fr;gap:14px}
+  @media(max-width:760px){.sfgrid{grid-template-columns:1fr}}
+  .sfcol{background:var(--panel-2);border:1px solid var(--grid);border-radius:10px;padding:12px 13px;min-height:190px}
+  .sfcol .sft{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);font-weight:700;margin-bottom:10px}
+  .sfcol .sft b{color:var(--ink)}
+  .sfchips{display:flex;flex-direction:column;gap:6px}
+  .sfchip{font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;border:1.5px solid var(--grid);background:#0a100e;color:#bcd0c8;display:flex;justify-content:space-between;gap:8px;align-items:baseline;transition:border-color .2s,background-color .2s}
+  .sfchip .st{font-size:9.5px;color:var(--dim);text-align:right}
+  .sfchip.run{border-color:var(--phos);background:color-mix(in srgb,var(--phos) 12%,#0a100e)}
+  .sfchip.run .st{color:var(--phos)}
+  .sfchip.blocked{border-color:var(--red);background:color-mix(in srgb,var(--red) 12%,#0a100e)}
+  .sfchip.blocked .st{color:var(--red)}
+  .sfchip.retract{border-color:var(--amber);background:color-mix(in srgb,var(--amber) 12%,#0a100e)}
+  .sfchip.retract .st{color:var(--amber)}
+  .sfempty{font-size:11px;color:var(--dim);padding:6px 2px}
+  .gatechk{display:flex;flex-direction:column;gap:8px;font-size:11.5px;color:#bcd0c8}
+  .gatechk .g{display:flex;gap:8px;align-items:baseline;padding:7px 10px;border-radius:7px;border:1px dashed var(--grid);line-height:1.45;transition:border-color .2s}
+  .gatechk .g .gi{font-family:var(--mono);font-weight:700;flex-shrink:0;color:var(--cyan)}
+  .gatechk .g.pass .gi{color:var(--phos)}
+  .gatechk .g.fail{border-color:var(--red);border-style:solid}
+  .gatechk .g.fail .gi{color:var(--red)}
+  .sfpool{margin-top:14px}
+  .sfpool .pl{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-bottom:6px}
+  .sfpool .pl b{font-family:var(--mono);color:var(--ink)}
+  .sfbar{height:16px;border-radius:6px;background:#0a100e;border:1px solid var(--grid);overflow:hidden}
+  .sfbar i{display:block;height:100%;width:0;background:var(--phos);transition:width .5s ease,background-color .3s}
+  .sfnote{margin-top:14px;background:var(--panel-2);border:1px solid var(--grid);border-left:3px solid var(--amber);border-radius:10px;padding:13px 16px;font-size:12.5px;color:#bcd0c8;line-height:1.7;min-height:74px}
+  .sfnote .nt{font-family:var(--sans);font-weight:800;font-size:13px;color:var(--amber);margin-bottom:4px}
+  .sfnote b{color:#fff}
+
   /* 优化清单 */
   .fixlist{counter-reset:fix;margin-top:18px;display:flex;flex-direction:column;gap:12px}
   .fix{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px 16px 58px;position:relative}
@@ -268,9 +312,70 @@
     </div>
   </section>
 
-  <!-- ===== 04 计算器 ===== -->
+  <!-- ===== 04 调度数据流 ===== -->
+  <section id="sec-sched">
+    <div class="sectit"><span class="no">04</span>排队发生在哪:SGLang 调度数据流 <span class="gx-badge">可交互</span></div>
+    <p class="seclead">"GPU 100% 还排队"之所以反直觉,是因为排队<b>不发生在 GPU 上,而发生在调度器的准入判断里</b>。先看一个请求从 HTTP 进来到吐字的完整数据流——注意标红的两处,就是队伍会堆起来的地方:</p>
+
+    <div class="flow">
+      <div class="fstep" style="--c:var(--cyan)"><div class="fn">①</div><div class="ft">HTTP 接入</div><div class="fd">OpenAI 兼容 API,基本不排队(除非网关限流)</div></div>
+      <div class="farrow">→</div>
+      <div class="fstep" style="--c:var(--cyan)"><div class="fn">②</div><div class="ft">Tokenizer 进程</div><div class="fd">文本→token id,独立进程,极少成为瓶颈</div></div>
+      <div class="farrow">→</div>
+      <div class="fstep" style="--c:var(--red)"><div class="fn">③ 排队点</div><div class="ft">Waiting 队列</div><div class="fd">radix 前缀匹配 + 按调度策略排序,<b style="color:var(--red)">等准入</b></div></div>
+      <div class="farrow">→</div>
+      <div class="fstep" style="--c:var(--amber)"><div class="fn">④ 闸门</div><div class="ft">准入判断</div><div class="fd">"KV 池装得下你吗?" 装不下就留在 ③</div></div>
+      <div class="farrow">→</div>
+      <div class="fstep" style="--c:var(--phos)"><div class="fn">⑤</div><div class="ft">Running batch</div><div class="fd">chunked prefill + decode,每步重组(continuous batching)</div></div>
+      <div class="farrow">→</div>
+      <div class="fstep" style="--c:var(--violet)"><div class="fn">⑥</div><div class="ft">Detokenize</div><div class="fd">token→文本,流式吐回;TTFT 在首个 token 到达时结束</div></div>
+    </div>
+
+    <div class="callout" style="border-left-color:var(--red)">
+      <span class="ct" style="color:var(--red)">准入闸门 ④ 在算什么</span>
+      每一轮调度,SGLang 从 waiting 队列头取请求,做一道判断(简化):<b>radix 命中后还需新算的 token 数 + 预留的输出空间 ≤ KV 池当前空闲</b>。通过 → 进 running batch 开始 prefill;不通过 → <b>留在队列,下一轮再试</b>。TTFT 里那 19 秒,就是请求反复卡在这道判断上——GPU 一直满载地服务<b>已经进去的人</b>,门外的人在等"池子腾位置"。
+    </div>
+
+    <div class="schedflow" id="schedflow">
+      <div class="hint">&gt;_ 重演本案例:<b>8 个互不共享前缀的 94K 请求</b>同时到达(每个 ≈ 池子的 15%)。按 ▶ 播放,或 ≪ ≫ 逐步看准入、拒绝、<b>retract 回退</b>三种事件:</div>
+      <div class="sfgrid">
+        <div class="sfcol">
+          <div class="sft">③ Waiting 队列 <b id="sf-wn"></b></div>
+          <div class="sfchips" id="sf-wait"></div>
+        </div>
+        <div class="sfcol">
+          <div class="sft">④ 准入闸门(本轮判断)</div>
+          <div class="gatechk" id="sf-gate"></div>
+        </div>
+        <div class="sfcol">
+          <div class="sft">⑤ Running batch <b id="sf-rn"></b></div>
+          <div class="sfchips" id="sf-run"></div>
+          <div class="sfpool">
+            <div class="pl"><span>KV 池 618K token</span><b id="sf-pct">0%</b></div>
+            <div class="sfbar"><i id="sf-fill"></i></div>
+          </div>
+        </div>
+      </div>
+      <div class="sfnote" id="sf-note"></div>
+    </div>
+
+    <div class="card am">
+      <h3>不止一处会排队:五个可能的堵点</h3>
+      <table class="spec">
+        <tr><th>堵点</th><th>队伍长什么样</th><th>本案例</th></tr>
+        <tr><td style="color:var(--red)">④ KV 准入(waiting 队列)</td><td>num_queue_reqs 堆积,TTFT 含整段等待;GPU 可能同时 100%</td><td class="v" style="color:var(--red)">★ 主犯</td></tr>
+        <tr><td style="color:var(--amber)">⑤ 内 · prefill 抢 decode</td><td>"隐形排队":没人显示等待,但有人发长请求时全员 token/s 骤降——decode 的算力被 prefill chunk 分走。chunked-prefill-size 越大越明显</td><td class="v">次要(300K 请求进来时)</td></tr>
+        <tr><td style="color:var(--amber)">⑤ 内 · retract 回退</td><td>池子逼近上限时,调度器把 running 里的请求<b>踢回 waiting</b>(KV 释放,稍后重算)——表现为个别请求 TTFT 极长、日志有 retract 记录</td><td class="v">高水位时偶发</td></tr>
+        <tr><td>① 网关/HTTP 层</td><td>引擎指标一切正常、GPU 利用率低,但用户在等——连接数/worker 上限</td><td class="v">已排除(证据①)</td></tr>
+        <tr><td>② / ⑥ Tokenize·Detokenize</td><td>极端高 QPS 短请求下 CPU 单点;SGLang 已拆独立进程,罕见</td><td class="v">无</td></tr>
+      </table>
+      <p style="margin-top:10px;color:var(--dim)">判别口诀:<b style="color:var(--ink)">先看 GPU 利用率分流(低→堵在①,高→往下),再看 queue+token_usage(高→堵在④),最后看 ITL(差→堵在⑤内部)</b>。本案例 GPU 100% + queue 堆积 + ITL 33.7ms 优秀,三个读数一起指向 ④。</p>
+    </div>
+  </section>
+
+  <!-- ===== 05 计算器 ===== -->
   <section id="sec-calc">
-    <div class="sectit"><span class="no">04</span>并发账本计算器 <span class="gx-badge">可交互</span></div>
+    <div class="sectit"><span class="no">05</span>并发账本计算器 <span class="gx-badge">可交互</span></div>
     <p class="seclead">整次排障最后收敛成一个除法:<b>并发上限 ≈ KV 池容量 ÷ 平均单请求上下文占用</b>。拖两个滑块感受一下——为什么"降低人均上下文"是不花钱版的扩容,而调 mem-fraction 只是小修小补:</p>
 
     <div class="calc" id="calc">
@@ -311,7 +416,7 @@
 
   <!-- ===== 05 TTFT ===== -->
   <section id="sec-ttft">
-    <div class="sectit"><span class="no">05</span>P95 TTFT = 20 秒意味着什么</div>
+    <div class="sectit"><span class="no">06</span>P95 TTFT = 20 秒意味着什么</div>
     <p class="seclead">TTFT（Time To First Token,首字延迟）是把容量问题翻译成<b>用户体感</b>的那座桥。P95=20s 的意思是:<b>每 20 个请求就有 1 个,从发出到看到第一个字等了超过 20 秒</b>。这 20 秒花在哪,可以精确拆开:</p>
 
     <div class="card am">
@@ -339,7 +444,7 @@
 
   <!-- ===== 06 修复清单 ===== -->
   <section id="sec-fix">
-    <div class="sectit"><span class="no">06</span>优化清单（按性价比排序）</div>
+    <div class="sectit"><span class="no">07</span>优化清单（按性价比排序）</div>
     <p class="seclead">诊断收敛后,能做的事其实不多——量化拉满、缓存命中 95%、调度参数无瓶颈,<b>没有哪个配置项能凭空翻倍 KV 池</b>。按投入产出排:</p>
 
     <div class="fixlist">
@@ -364,7 +469,7 @@
 
   <!-- ===== 07 方法论速查 ===== -->
   <section id="sec-cheat">
-    <div class="sectit"><span class="no">07</span>方法论速查:下次再遇到"并发不够"</div>
+    <div class="sectit"><span class="no">08</span>方法论速查:下次再遇到"并发不够"</div>
     <table class="spec">
       <tr><th>症状 / 读数</th><th>指向</th></tr>
       <tr><td>GPU 利用率低 + 用户在等</td><td>请求没进引擎 → 查网关、nginx worker、客户端连接池</td></tr>
@@ -391,7 +496,7 @@
   <footer>
     <p>并发容量实战页 · 内容来自一次真实的 <b>GLM + SGLang @ p5e.48xlarge（8×H200）</b>生产排障复盘（2026-07）。
     数字（618496 / 0.76 / 95.5% / 19.2s / 33.7ms 等）均为当时实测读数;计算器为线性近似模型,用于建立直觉,精确容量以 <code>max_total_num_tokens</code> 日志为准。
-    原理背景见 <a href="sglang.html">SGLang 引擎页</a>（RadixAttention / 调度器 / batch）与 <a href="pd.html">PD 分离页</a>。</p>
+    §04 调度动画为简化重演(准入判断、retract 时机为示意,细节以 SGLang 源码为准)。原理背景见 <a href="sglang.html">SGLang 引擎页</a>（RadixAttention / 调度器 / batch）与 <a href="pd.html">PD 分离页</a>。</p>
   </footer>
 
 </div>
@@ -479,6 +584,87 @@ document.getElementById('memfall').innerHTML=MEM.map(m=>
     if(window.GX) GX.flash(document.getElementById('poolbar'));
   }));
   render();
+})();
+
+// ---------- 04 调度排队动画 ----------
+(function(){
+  const elW=document.getElementById('sf-wait'), elR=document.getElementById('sf-run'),
+        elG=document.getElementById('sf-gate'), elN=document.getElementById('sf-note'),
+        elF=document.getElementById('sf-fill'), elP=document.getElementById('sf-pct'),
+        elWn=document.getElementById('sf-wn'), elRn=document.getElementById('sf-rn');
+  const host=document.getElementById('schedflow');
+  if(!elW||!window.gsap) return;
+
+  // 每步都是完整状态快照 → 渲染天然幂等(gx.js 步进 seek 的要求)
+  // wait/run 里的元素: [id, 状态文案, chip 类名]
+  const STEPS=[
+    {w:[['R1','等待',''],['R2','等待',''],['R3','等待',''],['R4','等待',''],['R5','等待',''],['R6','等待',''],['R7','等待',''],['R8','等待','']],
+     r:[], g:[['?','8 个 94K 请求同时到达,radix 匹配:互不共享前缀,0 命中','']],
+     pct:0, nt:'t=0 · 请求涌入',
+     nb:'8 个<b>互不共享前缀</b>的 94K 请求进入 waiting 队列。radix tree 帮不上忙(对比压测:100K <b>共享</b>前缀时 96 并发轻松通过——同一份 KV 大家复用)。'},
+    {w:[['R2','等待',''],['R3','等待',''],['R4','等待',''],['R5','等待',''],['R6','等待',''],['R7','等待',''],['R8','等待','']],
+     r:[['R1','prefill…','run']],
+     g:[['✓','R1:需 94K + 输出预留 ≤ 空闲 618K → 准入','pass']],
+     pct:15, nt:'轮 1 · 第一个进门',
+     nb:'调度器每轮从队列头取请求做<b>准入判断</b>:需要的 KV ≤ 池子空闲。R1 通过,开始 chunked prefill(8192/片)。'},
+    {w:[['R4','等待',''],['R5','等待',''],['R6','等待',''],['R7','等待',''],['R8','等待','']],
+     r:[['R1','decode','run'],['R2','prefill…','run'],['R3','prefill…','run']],
+     g:[['✓','R2、R3 相继准入,池子还宽裕','pass']],
+     pct:46, nt:'轮 2~3 · 连续放行',
+     nb:'continuous batching:<b>每一步都重组 batch</b>,新准入的请求和正在 decode 的请求拼在同一个 forward 里跑。GPU 从这里开始就贴 100% 了。'},
+    {w:[['R7','等待',''],['R8','等待','']],
+     r:[['R1','decode','run'],['R2','decode','run'],['R3','decode','run'],['R4','decode','run'],['R5','decode','run'],['R6','prefill…','run']],
+     g:[['✓','R4~R6 准入 → 池子来到 91%','pass']],
+     pct:91, nt:'轮 4~6 · 逼近水位线',
+     nb:'6 个 × 94K ≈ 564K,占 618K 池子的 <b>91%</b>。这正是生产指标里 token_usage 0.76~0.9 的由来(输出还在涨)。'},
+    {w:[['R7','⛔ 装不下','blocked'],['R8','等待','blocked']],
+     r:[['R1','decode','run'],['R2','decode','run'],['R3','decode','run'],['R4','decode','run'],['R5','decode','run'],['R6','decode','run']],
+     g:[['✕','R7:需 94K,空闲仅 54K → <b>拒绝,留在队列</b>','fail']],
+     pct:91, nt:'轮 7 · 闸门关闭 = 排队开始',
+     nb:'<b>排队就发生在这一刻</b>:R7 的 TTFT 秒表还在走,但它什么也没算——GPU 100% 忙着服务里面 6 个。这一等就是生产里的 <b>P95 TTFT ≈ 20s</b>。'},
+    {w:[['R7','⛔ 等位','blocked'],['R8','⛔ 等位','blocked']],
+     r:[['R1','decode','run'],['R2','decode','run'],['R3','decode','run'],['R4','decode','run'],['R5','decode','run'],['R6','decode','run']],
+     g:[['…','没有新准入;running 每生成 1 token,占用再 +6','']],
+     pct:96, nt:'持续 decode · 水位仍在爬',
+     nb:'容易忽略的点:<b>输出 token 也占 KV</b>。6 个请求每步各吐 1 个 token,池子以每步 +6 token 的速度继续上涨,向 100% 逼近。'},
+    {w:[['R6','↩ 被踢回(KV 已释放)','retract'],['R7','⛔ 等位','blocked'],['R8','⛔ 等位','blocked']],
+     r:[['R1','decode','run'],['R2','decode','run'],['R3','decode','run'],['R4','decode','run'],['R5','decode','run']],
+     g:[['↩','池子见顶 → <b>retract</b>:把最后进来的 R6 踢回队列,释放其 KV','fail']],
+     pct:81, nt:'高水位保护 · retract 回退',
+     nb:'池子真被吃满时,调度器会把 running 里的请求<b>retract 回 waiting</b>(KV 释放、稍后从缓存重建)。表现:个别请求 TTFT 特别长、日志出现 retract。<b>频繁 retract = 容量红线的铁证</b>。'},
+    {w:[['R7','⛔ 等位','blocked'],['R8','⛔ 等位','blocked']],
+     r:[['R2','decode','run'],['R3','decode','run'],['R4','decode','run'],['R5','decode','run'],['R6','↩ 重新准入','retract']],
+     g:[['✓','R1 完成 → 释放 94K;R6 重新准入','pass']],
+     pct:81, nt:'释放 · 但先还旧账',
+     nb:'R1 跑完,94K 归还池子。但空位先给了被 retract 的 R6——R7 还得继续等。<b>队伍移动的速度 = 请求完成的速度</b>,这就是为什么排队一旦形成就很难消化。'},
+    {w:[['R8','⛔ 等位','blocked']],
+     r:[['R2','decode','run'],['R3','decode','run'],['R4','decode','run'],['R5','decode','run'],['R6','decode','run'],['R7','prefill…','run']],
+     g:[['✓','又一个完成 → R7 终于准入。它的 TTFT = 整段等待 + prefill','pass']],
+     pct:91, nt:'R7 进门 · TTFT 秒表停止',
+     nb:'R7 等到位置时,TTFT 已计入全部排队时间——<b>这 20 秒里 19 秒在门外,不到 1 秒在 prefill</b>(95% 前缀命中时)。要让 R7 们不等:①分母变小(compact)②池子变大(mem-fraction/加机器)。'},
+  ];
+
+  function render(s){
+    const chip=([id,st,cls])=>`<div class="sfchip ${cls}"><span>${id} · 94K</span><span class="st">${st}</span></div>`;
+    elW.innerHTML=s.w.length?s.w.map(chip).join(''):'<div class="sfempty">(空)</div>';
+    elR.innerHTML=s.r.length?s.r.map(chip).join(''):'<div class="sfempty">(空)</div>';
+    elG.innerHTML=s.g.map(([i,t,c])=>`<div class="g ${c}"><span class="gi">${i}</span><span>${t}</span></div>`).join('');
+    elWn.textContent=s.w.length?`· ${s.w.length} 个`:''; elRn.textContent=s.r.length?`· ${s.r.length} 个`:'';
+    elF.style.width=s.pct+'%';
+    elF.style.background=s.pct>=90?'var(--red)':s.pct>=75?'var(--amber)':'var(--phos)';
+    elP.textContent=s.pct+'%';
+    elN.innerHTML=`<div class="nt">${s.nt}</div>${s.nb}`;
+  }
+
+  const tl=gsap.timeline({paused:true});
+  STEPS.forEach((s,i)=>{
+    tl.addLabel('s'+i);
+    tl.call(()=>render(s));
+    tl.to({},{duration:i===0?1.2:2.6});
+  });
+  render(STEPS[0]);
+  GX.controls(host, tl, {labels:true});
+  GX.autoplayOnVisible(host, tl);
 })();
 </script>
 <script src="../nav.js" data-base=".." data-active="capacity"></script>
